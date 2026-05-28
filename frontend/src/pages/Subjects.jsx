@@ -1,9 +1,15 @@
 import { Link, useParams } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
-import { SUBJECTS, findSubject } from "@/lib/subjects";
-import { Atom, BookOpen, Bank, Barbell, Function, ArrowLeft, ArrowRight, Sparkle } from "@phosphor-icons/react";
+import { SUBJECTS, findSubject, subjectsByCategory, SUBJECT_CATEGORIES } from "@/lib/subjects";
+import {
+  Atom, BookOpen, Bank, Barbell, Function, ArrowLeft, ArrowRight, Sparkle,
+  Translate, PaintBrush, MusicNotes, MaskHappy, Code, ForkKnife, Wrench, Brain, UsersThree, Lightbulb, Globe,
+} from "@phosphor-icons/react";
 
-const iconMap = { Atom, BookOpen, Bank, Barbell, Function };
+const iconMap = {
+  Atom, BookOpen, Bank, Barbell, Function, Translate, PaintBrush, MusicNotes,
+  MaskHappy, Code, ForkKnife, Wrench, Brain, UsersThree, Lightbulb, Globe,
+};
 
 export default function Subjects() {
   const { subjectId } = useParams();
@@ -12,40 +18,50 @@ export default function Subjects() {
 }
 
 function SubjectList() {
+  const grouped = subjectsByCategory();
   return (
     <AppLayout>
-      <div className="max-w-6xl space-y-8">
+      <div className="max-w-6xl space-y-12">
         <div>
           <div className="text-xs tracking-[0.2em] uppercase font-bold mb-2 text-[#4A4A4A]">All subjects</div>
           <h1 className="font-display font-black text-4xl sm:text-5xl tracking-tight">What do you want to study?</h1>
+          <p className="text-[#4A4A4A] mt-3">{SUBJECTS.length} subjects across {SUBJECT_CATEGORIES.length} categories — from core academics to vocational trades.</p>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {SUBJECTS.map((s) => {
-            const Icon = iconMap[s.icon] || Sparkle;
-            return (
-              <Link
-                key={s.id} to={`/subjects/${s.id}`}
-                className="brutal-card p-6"
-                style={{ backgroundColor: s.accentHex }}
-                data-testid={`subjects-card-${s.id}`}
-              >
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="border-2 border-ink bg-white rounded-md p-2 shadow-brutal">
-                    <Icon size={22} weight="duotone" />
-                  </div>
-                  <div className="font-display font-bold text-xl">{s.name}</div>
-                </div>
-                <p className="text-sm text-[#4A4A4A] mb-6">{s.tagline}</p>
-                <ul className="space-y-1 text-sm">
-                  {s.topics.slice(0, 4).map((t) => (
-                    <li key={t.id} className="flex items-center gap-2"><ArrowRight size={14} weight="bold" /> {t.name}</li>
-                  ))}
-                </ul>
-              </Link>
-            );
-          })}
-        </div>
+        {SUBJECT_CATEGORIES.map((cat) => {
+          const items = grouped[cat.id] || [];
+          if (!items.length) return null;
+          return (
+            <section key={cat.id}>
+              <div className="flex items-baseline gap-3 mb-4 border-b-2 border-ink pb-3">
+                <h2 className="font-display font-extrabold text-2xl tracking-tight">{cat.name}</h2>
+                <span className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">{items.length}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {items.map((s) => {
+                  const Icon = iconMap[s.icon] || Sparkle;
+                  return (
+                    <Link
+                      key={s.id} to={`/subjects/${s.id}`}
+                      className="brutal-card p-5"
+                      style={{ backgroundColor: s.accentHex }}
+                      data-testid={`subjects-card-${s.id}`}
+                    >
+                      <div className="flex items-center gap-3 mb-3">
+                        <div className="border-2 border-ink bg-white rounded-md p-2 shadow-brutal">
+                          <Icon size={20} weight="duotone" />
+                        </div>
+                        <div className="font-display font-bold text-lg">{s.name}</div>
+                      </div>
+                      <p className="text-sm text-[#4A4A4A] mb-3">{s.tagline}</p>
+                      <div className="text-xs tracking-[0.2em] uppercase font-bold">{s.topics.length} topics →</div>
+                    </Link>
+                  );
+                })}
+              </div>
+            </section>
+          );
+        })}
       </div>
     </AppLayout>
   );
@@ -53,7 +69,6 @@ function SubjectList() {
 
 function SubjectDetail({ subjectId }) {
   const subject = findSubject(subjectId);
-
   if (!subject) {
     return (
       <AppLayout>
@@ -64,7 +79,6 @@ function SubjectDetail({ subjectId }) {
       </AppLayout>
     );
   }
-
   const Icon = iconMap[subject.icon] || Sparkle;
 
   return (

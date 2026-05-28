@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
-  House, BookOpen, Timer, ChartLine, SignOut, GraduationCap, List, X,
+  House, BookOpen, Timer, ChartLine, SignOut, GraduationCap, List, X, CreditCard,
 } from "@phosphor-icons/react";
 import { useState } from "react";
 
@@ -10,6 +10,7 @@ const navItems = [
   { to: "/subjects", label: "Subjects", icon: BookOpen, testid: "nav-subjects" },
   { to: "/focus", label: "Focus Mode", icon: Timer, testid: "nav-focus" },
   { to: "/progress", label: "Progress", icon: ChartLine, testid: "nav-progress" },
+  { to: "/pricing", label: "Plans", icon: CreditCard, testid: "nav-pricing" },
 ];
 
 export default function AppLayout({ children }) {

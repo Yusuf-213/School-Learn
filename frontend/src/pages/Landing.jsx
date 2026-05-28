@@ -22,6 +22,7 @@ export default function Landing() {
             <span className="font-display font-black text-2xl tracking-tight">ScholarHub</span>
           </div>
           <div className="flex items-center gap-3">
+            <Link to="/pricing" className="hidden sm:inline-flex brutal-btn bg-white hover:bg-butter text-sm" data-testid="landing-pricing-btn">Pricing</Link>
             <Link to="/login" className="brutal-btn bg-white hover:bg-butter" data-testid="landing-signin-btn">Sign in</Link>
             <Link to="/register" className="brutal-btn bg-ink text-white hover:bg-[#2A2A2A]" data-testid="landing-getstarted-btn">Get started</Link>
           </div>

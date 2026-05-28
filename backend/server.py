@@ -14,6 +14,9 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse, CheckoutStatusResponse,
+)
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -23,8 +26,20 @@ mongo_url = os.environ['MONGO_URL']
 db_name = os.environ['DB_NAME']
 JWT_SECRET = os.environ['JWT_SECRET']
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
+STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', '')
+MS_CLIENT_ID = os.environ.get('MS_CLIENT_ID', '')
+MS_TENANT_ID = os.environ.get('MS_TENANT_ID', 'common')
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_DAYS = 7
+
+# Subscription plans (GBP). Amounts are server-side ONLY (never trust frontend).
+PLANS = {
+    "free":     {"name": "Free",     "amount": 0.00,   "currency": "gbp", "period": "month", "daily_ai_limit": 5,    "papers": False, "exam_boards": False},
+    "basic":    {"name": "Basic",    "amount": 5.00,   "currency": "gbp", "period": "month", "daily_ai_limit": 30,   "papers": True,  "exam_boards": False},
+    "standard": {"name": "Standard", "amount": 10.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": False},
+    "pro":      {"name": "Pro",      "amount": 15.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": True},
+    "school":   {"name": "School (annual)", "amount": 500.00, "currency": "gbp", "period": "year",  "daily_ai_limit": 9999, "papers": True,  "exam_boards": True},
+}
 
 client = AsyncIOMotorClient(mongo_url)
 db = client[db_name]
@@ -60,7 +75,12 @@ class AIGenerateRequest(BaseModel):
     topic: str
     sub_topic: Optional[str] = None
     grade_level: str
-    content_type: Literal["summary", "quiz", "flashcards", "explanation"]
+    content_type: Literal["summary", "quiz", "flashcards", "explanation", "paper"]
+    exam_board: Optional[str] = None  # 'aqa','edexcel','ocr','ib','cie','generic'
+
+class CheckoutCreateRequest(BaseModel):
+    plan_id: Literal["basic", "standard", "pro", "school"]
+    origin_url: str
 
 class AIChatRequest(BaseModel):
     subject: str
@@ -348,6 +368,39 @@ def build_prompt(content_type: str, subject: str, topic: str, sub_topic: Optiona
         )
     return system, user
 
+def build_paper_prompt(subject: str, topic: str, sub_topic: Optional[str], grade_level: str, exam_board: Optional[str]) -> tuple[str, str]:
+    target = f"{topic}" + (f" — {sub_topic}" if sub_topic else "")
+    board = (exam_board or "generic").lower()
+    board_label = {
+        "aqa": "AQA (UK)", "edexcel": "Edexcel (UK)", "ocr": "OCR (UK)",
+        "ib": "International Baccalaureate", "cie": "Cambridge International (CIE)",
+        "generic": "a generic mock exam",
+    }.get(board, "a generic mock exam")
+    grade_map = {
+        "preschool": "preschool worksheets (pictures + tracing)",
+        "elementary": "elementary-level worksheet",
+        "middle_school": "middle-school assessment",
+        "high_school": "high-school exam paper (GCSE-equivalent)",
+        "undergrad": "undergraduate exam paper",
+        "grad": "graduate-level exam paper",
+        "phd": "PhD-style qualifying exam",
+    }
+    paper_level = grade_map.get(grade_level, grade_map["high_school"])
+    system = (
+        f"You are an expert examiner writing realistic practice papers for {subject}, "
+        f"styled like {board_label}. Be rigorous and authentic to the exam style."
+    )
+    user = (
+        f"Produce a complete practice paper on: {target}.\n"
+        f"Style: {paper_level}.\n\n"
+        f"Return STRICT JSON:\n"
+        f'{{"title": "string", "instructions": "string", "duration_minutes": 0, "total_marks": 0, '
+        f'"sections": [{{"name": "string", "questions": [{{"number": 0, "marks": 0, "question": "string", "parts": [{{"label": "a", "question": "string", "marks": 0}}]}}]}}], '
+        f'"mark_scheme": [{{"q": "string", "answer": "string"}}]}}\n'
+        f"6-10 questions total. Mix of multi-mark structured questions. No prose outside JSON."
+    )
+    return system, user
+
 def extract_json(text: str) -> dict:
     """Extract first JSON object from a string."""
     text = text.strip()
@@ -365,11 +418,68 @@ def extract_json(text: str) -> dict:
         raise ValueError("No JSON object found")
     return json.loads(text[start:end + 1])
 
+async def get_user_plan(user: dict) -> dict:
+    tier = user.get("subscription_tier", "free")
+    expires = user.get("subscription_expires_at")
+    if tier != "free" and expires:
+        try:
+            exp = datetime.fromisoformat(expires) if isinstance(expires, str) else expires
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp < datetime.now(timezone.utc):
+                tier = "free"
+        except Exception:
+            tier = "free"
+    return {"tier": tier, **PLANS.get(tier, PLANS["free"])}
+
+@api_router.get("/plans")
+async def list_plans():
+    return {"plans": [{"id": pid, **p} for pid, p in PLANS.items()]}
+
+@api_router.get("/billing/me")
+async def billing_me(current=Depends(get_current_user)):
+    plan = await get_user_plan(current)
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    used_today = await db.generated_content.count_documents({
+        "user_id": current["user_id"],
+        "created_at": {"$gte": today_start},
+    })
+    return {
+        "tier": plan["tier"],
+        "plan": {k: plan[k] for k in ("name", "amount", "currency", "period", "daily_ai_limit", "papers", "exam_boards")},
+        "used_today": used_today,
+        "expires_at": current.get("subscription_expires_at"),
+    }
+
 @api_router.post("/ai/generate")
 async def ai_generate(req: AIGenerateRequest, current=Depends(get_current_user)):
-    system, user_text = build_prompt(
-        req.content_type, req.subject, req.topic, req.sub_topic, req.grade_level
-    )
+    plan = await get_user_plan(current)
+    # Gate: papers require paid plan
+    if req.content_type == "paper" and not plan["papers"]:
+        raise HTTPException(status_code=402, detail="Practice papers require a Basic plan or higher.")
+    # Gate: exam-board mapped papers require Pro
+    if req.content_type == "paper" and req.exam_board and req.exam_board != "generic" and not plan["exam_boards"]:
+        raise HTTPException(status_code=402, detail="Exam-board papers (AQA, Edexcel, OCR, IB, CIE) require a Pro plan.")
+    # Gate: daily usage
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    used_today = await db.generated_content.count_documents({
+        "user_id": current["user_id"],
+        "created_at": {"$gte": today_start},
+    })
+    if used_today >= plan["daily_ai_limit"]:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Daily AI limit reached ({plan['daily_ai_limit']}). Upgrade your plan to continue.",
+        )
+
+    if req.content_type == "paper":
+        system, user_text = build_paper_prompt(
+            req.subject, req.topic, req.sub_topic, req.grade_level, req.exam_board
+        )
+    else:
+        system, user_text = build_prompt(
+            req.content_type, req.subject, req.topic, req.sub_topic, req.grade_level
+        )
     session_id = f"gen_{uuid.uuid4().hex[:10]}"
     chat = LlmChat(
         api_key=EMERGENT_LLM_KEY,
@@ -384,7 +494,6 @@ async def ai_generate(req: AIGenerateRequest, current=Depends(get_current_user))
         logging.exception("AI generation failed")
         raise HTTPException(status_code=500, detail=f"AI generation failed: {str(e)}")
 
-    # Cache result for the user
     doc = {
         "user_id": current["user_id"],
         "subject": req.subject,
@@ -392,6 +501,7 @@ async def ai_generate(req: AIGenerateRequest, current=Depends(get_current_user))
         "sub_topic": req.sub_topic,
         "grade_level": req.grade_level,
         "content_type": req.content_type,
+        "exam_board": req.exam_board,
         "content": data,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -547,6 +657,193 @@ async def stats(current=Depends(get_current_user)):
         "topics_completed": completed,
         "focus_sessions_completed": focus_count,
         "focus_minutes": focus_minutes,
+    }
+
+# ====================== Stripe Billing ======================
+
+def _stripe(http_request: Request) -> StripeCheckout:
+    host_url = str(http_request.base_url)
+    webhook_url = f"{host_url}api/webhook/stripe"
+    return StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+
+@api_router.post("/billing/checkout")
+async def billing_checkout(
+    payload: CheckoutCreateRequest, http_request: Request, current=Depends(get_current_user)
+):
+    plan = PLANS.get(payload.plan_id)
+    if not plan or plan["amount"] <= 0:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+
+    origin = payload.origin_url.rstrip("/")
+    success_url = f"{origin}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/pricing"
+
+    sc = _stripe(http_request)
+    req = CheckoutSessionRequest(
+        amount=plan["amount"],
+        currency=plan["currency"],
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={
+            "user_id": current["user_id"],
+            "email": current["email"],
+            "plan_id": payload.plan_id,
+            "period": plan["period"],
+        },
+    )
+    session: CheckoutSessionResponse = await sc.create_checkout_session(req)
+
+    await db.payment_transactions.insert_one({
+        "session_id": session.session_id,
+        "user_id": current["user_id"],
+        "email": current["email"],
+        "plan_id": payload.plan_id,
+        "amount": plan["amount"],
+        "currency": plan["currency"],
+        "period": plan["period"],
+        "payment_status": "initiated",
+        "status": "open",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {"url": session.url, "session_id": session.session_id}
+
+@api_router.get("/billing/status/{session_id}")
+async def billing_status(session_id: str, http_request: Request, current=Depends(get_current_user)):
+    tx = await db.payment_transactions.find_one({"session_id": session_id, "user_id": current["user_id"]}, {"_id": 0})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    # If already finalised, return cached result
+    if tx.get("payment_status") in {"paid", "expired", "failed"}:
+        return tx
+
+    sc = _stripe(http_request)
+    try:
+        status: CheckoutStatusResponse = await sc.get_checkout_status(session_id)
+    except Exception as e:
+        logging.exception("Stripe status fetch failed")
+        raise HTTPException(status_code=500, detail=f"Stripe status error: {e}")
+
+    update = {
+        "status": status.status,
+        "payment_status": status.payment_status,
+        "amount_total": status.amount_total,
+        "currency": status.currency,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payment_transactions.update_one({"session_id": session_id}, {"$set": update})
+
+    # Activate subscription only if paid AND not previously applied
+    if status.payment_status == "paid" and tx.get("payment_status") != "paid":
+        plan = PLANS.get(tx["plan_id"], PLANS["free"])
+        days = 365 if plan["period"] == "year" else 30
+        expires = datetime.now(timezone.utc) + timedelta(days=days)
+        await db.users.update_one(
+            {"user_id": current["user_id"]},
+            {"$set": {
+                "subscription_tier": tx["plan_id"],
+                "subscription_expires_at": expires.isoformat(),
+                "subscription_period": plan["period"],
+            }},
+        )
+
+    tx = await db.payment_transactions.find_one({"session_id": session_id, "user_id": current["user_id"]}, {"_id": 0})
+    return tx
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+    sc = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url="")
+    try:
+        evt = await sc.handle_webhook(body, sig)
+    except Exception as e:
+        logging.exception("Stripe webhook handler failed")
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if evt.session_id:
+        tx = await db.payment_transactions.find_one({"session_id": evt.session_id})
+        if tx and tx.get("payment_status") != "paid":
+            await db.payment_transactions.update_one(
+                {"session_id": evt.session_id},
+                {"$set": {
+                    "payment_status": evt.payment_status,
+                    "event_type": evt.event_type,
+                    "event_id": evt.event_id,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }},
+            )
+            if evt.payment_status == "paid" and tx.get("plan_id"):
+                plan = PLANS.get(tx["plan_id"], PLANS["free"])
+                days = 365 if plan["period"] == "year" else 30
+                expires = datetime.now(timezone.utc) + timedelta(days=days)
+                await db.users.update_one(
+                    {"user_id": tx["user_id"]},
+                    {"$set": {
+                        "subscription_tier": tx["plan_id"],
+                        "subscription_expires_at": expires.isoformat(),
+                        "subscription_period": plan["period"],
+                    }},
+                )
+    return {"ok": True}
+
+# ====================== Microsoft Auth config ======================
+
+@api_router.get("/auth/config")
+async def auth_config():
+    return {
+        "microsoft_enabled": bool(MS_CLIENT_ID),
+        "microsoft_client_id": MS_CLIENT_ID or None,
+        "microsoft_tenant_id": MS_TENANT_ID,
+    }
+
+class MicrosoftAuthRequest(BaseModel):
+    access_token: str
+
+@api_router.post("/auth/microsoft")
+async def microsoft_auth(req: MicrosoftAuthRequest):
+    if not MS_CLIENT_ID:
+        raise HTTPException(status_code=503, detail="Microsoft sign-in not configured on this server.")
+    # Verify the access token by calling Microsoft Graph /me
+    async with httpx.AsyncClient(timeout=15.0) as hc:
+        r = await hc.get(
+            "https://graph.microsoft.com/v1.0/me",
+            headers={"Authorization": f"Bearer {req.access_token}"},
+        )
+    if r.status_code != 200:
+        raise HTTPException(status_code=401, detail="Invalid Microsoft token")
+    data = r.json()
+    email = (data.get("mail") or data.get("userPrincipalName") or "").lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="No email returned by Microsoft")
+
+    user = await db.users.find_one({"email": email})
+    if not user:
+        user_id = f"user_{uuid.uuid4().hex[:12]}"
+        user_doc = {
+            "user_id": user_id,
+            "name": data.get("displayName") or email,
+            "email": email,
+            "picture": None,
+            "password_hash": None,
+            "grade_level": "high_school",
+            "provider": "microsoft",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await db.users.insert_one(user_doc)
+        user = user_doc
+    token = make_jwt(user["user_id"])
+    return {
+        "token": token,
+        "user": {
+            "user_id": user["user_id"],
+            "name": user.get("name"),
+            "email": user["email"],
+            "picture": user.get("picture"),
+            "grade_level": user.get("grade_level", "high_school"),
+            "provider": "microsoft",
+        },
     }
 
 # ====================== Register router & middleware ======================

@@ -94,6 +94,15 @@ export default function Register() {
             <GoogleLogo size={20} weight="bold" /> Sign up with Google
           </button>
 
+          <button
+            data-testid="register-microsoft-btn"
+            disabled
+            className="brutal-btn w-full flex items-center justify-center gap-2 mt-3 bg-white opacity-60 cursor-not-allowed"
+          >
+            <span className="font-bold">Sign up with Microsoft</span>
+            <span className="text-xs text-[#4A4A4A]">(soon)</span>
+          </button>
+
           <p className="text-sm mt-6 text-center">
             Have an account?{" "}
             <Link to="/login" className="font-bold underline underline-offset-4" data-testid="login-link">Sign in</Link>

@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
-import { findSubject, findTopic, GRADE_LEVELS } from "@/lib/subjects";
+import { findSubject, findTopic, GRADE_LEVELS, EXAM_BOARDS } from "@/lib/subjects";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
-import { ArrowLeft, Sparkle, Lightbulb, Cards, Question, ChatCircleDots, PaperPlaneTilt, ArrowRight, CheckCircle, XCircle, ArrowsClockwise } from "@phosphor-icons/react";
+import { ArrowLeft, Sparkle, Lightbulb, Cards, Question, ChatCircleDots, PaperPlaneTilt, ArrowRight, CheckCircle, XCircle, ArrowsClockwise, FileText, Printer } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const TABS = [
   { id: "summary", label: "Summary", icon: Lightbulb },
   { id: "quiz", label: "Quiz", icon: Question },
   { id: "flashcards", label: "Flashcards", icon: Cards },
+  { id: "paper", label: "Practice Paper", icon: FileText },
   { id: "tutor", label: "AI Tutor", icon: ChatCircleDots },
 ];
 
@@ -23,6 +24,7 @@ export default function Topic() {
   const [subTopic, setSubTopic] = useState("");
   const [content, setContent] = useState({});
   const [loading, setLoading] = useState(false);
+  const [examBoard, setExamBoard] = useState("generic");
 
   if (!subject || !topic) {
     return (
@@ -125,6 +127,9 @@ export default function Topic() {
           )}
           {activeTab === "flashcards" && (
             <FlashcardsView data={content.flashcards} loading={loading} onGenerate={() => generate("flashcards")} />
+          )}
+          {activeTab === "paper" && (
+            <PaperView data={content.paper} loading={loading} onGenerate={() => generate("paper")} examBoard={examBoard} setExamBoard={setExamBoard} />
           )}
           {activeTab === "tutor" && (
             <TutorView subject={subject.name} topic={topic.name} grade_level={user?.grade_level || "high_school"} />
@@ -320,8 +325,96 @@ function FlashcardsView({ data, onGenerate, loading }) {
   );
 }
 
-function TutorView({ subject, topic, grade_level }) {
-  const [messages, setMessages] = useState([]);
+function PaperView({ data, onGenerate, loading, examBoard, setExamBoard }) {
+  return (
+    <div className="space-y-4" data-testid="paper-content">
+      <div className="flex flex-wrap items-end gap-3 border-b-2 border-ink pb-4">
+        <label className="block">
+          <span className="text-xs uppercase tracking-[0.2em] font-bold">Exam board</span>
+          <select
+            data-testid="paper-board-select"
+            value={examBoard} onChange={(e) => setExamBoard(e.target.value)}
+            className="mt-2 brutal-input bg-white py-2 px-3 text-sm"
+          >
+            {EXAM_BOARDS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+          </select>
+        </label>
+        <button
+          onClick={onGenerate} disabled={loading}
+          data-testid="paper-generate-btn"
+          className="brutal-btn bg-ink text-white inline-flex items-center gap-2 disabled:opacity-60"
+        >
+          <Sparkle size={16} weight="bold" /> {loading ? "Generating…" : data ? "Regenerate paper" : "Generate paper"}
+        </button>
+        {data && (
+          <button onClick={() => window.print()} className="brutal-btn bg-white inline-flex items-center gap-2 text-sm" data-testid="paper-print-btn">
+            <Printer size={16} weight="bold" /> Print / PDF
+          </button>
+        )}
+      </div>
+
+      {!data ? (
+        <div className="text-center py-10">
+          <FileText size={36} weight="duotone" className="mx-auto" />
+          <div className="font-display font-bold text-xl mt-3">Generate a full practice paper.</div>
+          <p className="text-[#4A4A4A] text-sm mt-2 max-w-md mx-auto">
+            Structured questions in real exam style with a mark scheme at the end. Papers require a Basic plan or higher; exam-board mapped papers require Pro.
+          </p>
+        </div>
+      ) : (
+        <div className="print:bg-white" id="paper-printable">
+          <div className="border-b-2 border-ink pb-4 mb-6">
+            <h2 className="font-display font-extrabold text-2xl tracking-tight">{data.title}</h2>
+            <div className="flex flex-wrap gap-4 mt-2 text-sm text-[#4A4A4A]">
+              {data.duration_minutes > 0 && <span><strong>Duration:</strong> {data.duration_minutes} min</span>}
+              {data.total_marks > 0 && <span><strong>Total marks:</strong> {data.total_marks}</span>}
+            </div>
+            {data.instructions && <p className="mt-3 italic">{data.instructions}</p>}
+          </div>
+
+          {data.sections?.map((sec, si) => (
+            <div key={si} className="mb-6">
+              <div className="text-xs uppercase tracking-[0.2em] font-bold mb-3">{sec.name}</div>
+              <div className="space-y-5">
+                {sec.questions?.map((q, qi) => (
+                  <div key={qi} className="border-2 border-ink rounded-md p-4 bg-white">
+                    <div className="flex justify-between gap-3 mb-2">
+                      <div className="font-bold">Q{q.number}. {q.question}</div>
+                      {q.marks > 0 && <span className="text-sm font-bold whitespace-nowrap">[{q.marks} marks]</span>}
+                    </div>
+                    {q.parts?.length > 0 && (
+                      <ol className="mt-3 space-y-2 pl-1">
+                        {q.parts.map((p, pi) => (
+                          <li key={pi} className="flex justify-between gap-3">
+                            <span><strong>({p.label})</strong> {p.question}</span>
+                            {p.marks > 0 && <span className="text-sm font-bold whitespace-nowrap">[{p.marks}]</span>}
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {data.mark_scheme?.length > 0 && (
+            <details className="brutal-card p-5 bg-butter mt-6" data-testid="paper-markscheme">
+              <summary className="font-display font-bold text-lg cursor-pointer">Mark scheme</summary>
+              <ol className="mt-3 space-y-3 text-sm">
+                {data.mark_scheme.map((m, i) => (
+                  <li key={i}><strong>{m.q}:</strong> {m.answer}</li>
+                ))}
+              </ol>
+            </details>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TutorView({ subject, topic, grade_level }) {  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState(null);

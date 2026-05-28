@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { GraduationCap, GoogleLogo, Envelope, Lock, Warning } from "@phosphor-icons/react";
+import { api } from "@/lib/api";
+import { GraduationCap, GoogleLogo, MicrosoftOutlookLogo, Envelope, Lock, Warning } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 export default function Login() {
@@ -12,6 +13,11 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [msEnabled, setMsEnabled] = useState(false);
+
+  useEffect(() => {
+    api.get("/auth/config").then(({ data }) => setMsEnabled(!!data.microsoft_enabled)).catch(() => {});
+  }, []);
 
   const from = location.state?.from?.pathname || "/dashboard";
 
@@ -88,6 +94,16 @@ export default function Login() {
 
           <button onClick={onGoogle} data-testid="login-google-btn" className="brutal-btn bg-white hover:bg-butter w-full flex items-center justify-center gap-2">
             <GoogleLogo size={20} weight="bold" /> Continue with Google
+          </button>
+
+          <button
+            data-testid="login-microsoft-btn"
+            disabled={!msEnabled}
+            onClick={() => msEnabled ? null : toast.info("Microsoft sign-in coming soon — admin needs to add Azure credentials.")}
+            className={`brutal-btn w-full flex items-center justify-center gap-2 mt-3 ${msEnabled ? "bg-white hover:bg-butter" : "bg-white opacity-60 cursor-not-allowed"}`}
+          >
+            <MicrosoftOutlookLogo size={20} weight="bold" /> Continue with Microsoft
+            {!msEnabled && <span className="text-xs text-[#4A4A4A] ml-1">(soon)</span>}
           </button>
 
           <p className="text-sm mt-6 text-center">
