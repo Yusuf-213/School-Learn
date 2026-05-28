@@ -1,0 +1,111 @@
+import { Link, useParams } from "react-router-dom";
+import AppLayout from "@/components/AppLayout";
+import { SUBJECTS, findSubject } from "@/lib/subjects";
+import { Atom, BookOpen, Bank, Barbell, Function, ArrowLeft, ArrowRight, Sparkle } from "@phosphor-icons/react";
+
+const iconMap = { Atom, BookOpen, Bank, Barbell, Function };
+
+export default function Subjects() {
+  const { subjectId } = useParams();
+  if (subjectId) return <SubjectDetail subjectId={subjectId} />;
+  return <SubjectList />;
+}
+
+function SubjectList() {
+  return (
+    <AppLayout>
+      <div className="max-w-6xl space-y-8">
+        <div>
+          <div className="text-xs tracking-[0.2em] uppercase font-bold mb-2 text-[#4A4A4A]">All subjects</div>
+          <h1 className="font-display font-black text-4xl sm:text-5xl tracking-tight">What do you want to study?</h1>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {SUBJECTS.map((s) => {
+            const Icon = iconMap[s.icon] || Sparkle;
+            return (
+              <Link
+                key={s.id} to={`/subjects/${s.id}`}
+                className="brutal-card p-6"
+                style={{ backgroundColor: s.accentHex }}
+                data-testid={`subjects-card-${s.id}`}
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="border-2 border-ink bg-white rounded-md p-2 shadow-brutal">
+                    <Icon size={22} weight="duotone" />
+                  </div>
+                  <div className="font-display font-bold text-xl">{s.name}</div>
+                </div>
+                <p className="text-sm text-[#4A4A4A] mb-6">{s.tagline}</p>
+                <ul className="space-y-1 text-sm">
+                  {s.topics.slice(0, 4).map((t) => (
+                    <li key={t.id} className="flex items-center gap-2"><ArrowRight size={14} weight="bold" /> {t.name}</li>
+                  ))}
+                </ul>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    </AppLayout>
+  );
+}
+
+function SubjectDetail({ subjectId }) {
+  const subject = findSubject(subjectId);
+
+  if (!subject) {
+    return (
+      <AppLayout>
+        <div className="max-w-3xl">
+          <Link to="/subjects" className="text-sm font-bold underline underline-offset-4">← All subjects</Link>
+          <h1 className="font-display font-black text-3xl mt-4">Subject not found.</h1>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  const Icon = iconMap[subject.icon] || Sparkle;
+
+  return (
+    <AppLayout>
+      <div className="max-w-6xl space-y-8">
+        <Link to="/subjects" className="inline-flex items-center gap-2 text-sm font-bold" data-testid="back-to-subjects">
+          <ArrowLeft size={16} weight="bold" /> All subjects
+        </Link>
+
+        <div className="brutal-card p-8" style={{ backgroundColor: subject.accentHex }}>
+          <div className="flex items-center gap-4 mb-4">
+            <div className="border-2 border-ink bg-white rounded-md p-3 shadow-brutal">
+              <Icon size={28} weight="duotone" />
+            </div>
+            <div>
+              <div className="text-xs tracking-[0.2em] uppercase font-bold">{subject.topics.length} topics</div>
+              <h1 className="font-display font-black text-4xl sm:text-5xl tracking-tight">{subject.name}</h1>
+            </div>
+          </div>
+          <p className="text-[#4A4A4A] text-lg">{subject.tagline}</p>
+        </div>
+
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {subject.topics.map((t) => (
+            <Link
+              key={t.id}
+              to={`/subjects/${subject.id}/topic/${t.id}`}
+              className="brutal-card p-6 bg-white"
+              data-testid={`topic-card-${t.id}`}
+            >
+              <div className="font-display font-bold text-xl mb-3">{t.name}</div>
+              <ul className="text-sm space-y-1 text-[#4A4A4A]">
+                {t.sub.map((s) => <li key={s}>· {s}</li>)}
+              </ul>
+              <div className="mt-5 inline-flex items-center gap-2 text-xs tracking-[0.2em] uppercase font-bold">
+                Open <ArrowRight size={14} weight="bold" />
+              </div>
+            </Link>
+          ))}
+        </div>
+      </div>
+    </AppLayout>
+  );
+}
