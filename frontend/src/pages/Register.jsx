@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import GlobalNav from "@/components/GlobalNav";
 import { GraduationCap, GoogleLogo, Warning } from "@phosphor-icons/react";
 import { GRADE_LEVELS } from "@/lib/subjects";
 import { toast } from "sonner";
@@ -35,13 +36,10 @@ export default function Register() {
   };
 
   return (
-    <div className="min-h-screen bg-paper flex items-center justify-center p-6">
-      <div className="w-full max-w-md">
-        <Link to="/" className="flex items-center gap-2 mb-8 justify-center">
-          <div className="border-2 border-ink rounded-md bg-mint p-2 shadow-brutal"><GraduationCap size={22} weight="duotone" /></div>
-          <span className="font-display font-black text-2xl tracking-tight">ScholarHub</span>
-        </Link>
-
+    <div className="min-h-screen bg-paper">
+      <GlobalNav />
+      <div className="flex items-center justify-center p-6 py-10">
+        <div className="w-full max-w-md">
         <div className="brutal-card p-8">
           <h1 className="font-display font-black text-4xl tracking-tight mb-2">Create your account.</h1>
           <p className="text-[#4A4A4A] mb-6">Pick a grade level — we'll adapt every lesson to it.</p>
@@ -94,19 +92,11 @@ export default function Register() {
             <GoogleLogo size={20} weight="bold" /> Sign up with Google
           </button>
 
-          <button
-            data-testid="register-microsoft-btn"
-            disabled
-            className="brutal-btn w-full flex items-center justify-center gap-2 mt-3 bg-white opacity-60 cursor-not-allowed"
-          >
-            <span className="font-bold">Sign up with Microsoft</span>
-            <span className="text-xs text-[#4A4A4A]">(soon)</span>
-          </button>
-
           <p className="text-sm mt-6 text-center">
             Have an account?{" "}
             <Link to="/login" className="font-bold underline underline-offset-4" data-testid="login-link">Sign in</Link>
           </p>
+        </div>
         </div>
       </div>
     </div>

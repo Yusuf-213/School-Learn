@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { api } from "@/lib/api";
-import { GraduationCap, GoogleLogo, MicrosoftOutlookLogo, Envelope, Lock, Warning } from "@phosphor-icons/react";
+import GlobalNav from "@/components/GlobalNav";
+import { GraduationCap, GoogleLogo, Envelope, Lock, Warning } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 export default function Login() {
@@ -13,11 +13,6 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
-  const [msEnabled, setMsEnabled] = useState(false);
-
-  useEffect(() => {
-    api.get("/auth/config").then(({ data }) => setMsEnabled(!!data.microsoft_enabled)).catch(() => {});
-  }, []);
 
   const from = location.state?.from?.pathname || "/dashboard";
 
@@ -43,13 +38,10 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen bg-paper flex items-center justify-center p-6">
-      <div className="w-full max-w-md">
-        <Link to="/" className="flex items-center gap-2 mb-8 justify-center" data-testid="back-home-link">
-          <div className="border-2 border-ink rounded-md bg-mint p-2 shadow-brutal"><GraduationCap size={22} weight="duotone" /></div>
-          <span className="font-display font-black text-2xl tracking-tight">ScholarHub</span>
-        </Link>
-
+    <div className="min-h-screen bg-paper">
+      <GlobalNav />
+      <div className="flex items-center justify-center p-6 py-10">
+        <div className="w-full max-w-md">
         <div className="brutal-card p-8">
           <h1 className="font-display font-black text-4xl tracking-tight mb-2">Welcome back.</h1>
           <p className="text-[#4A4A4A] mb-6">Sign in to keep your progress and continue learning.</p>
@@ -96,20 +88,11 @@ export default function Login() {
             <GoogleLogo size={20} weight="bold" /> Continue with Google
           </button>
 
-          <button
-            data-testid="login-microsoft-btn"
-            disabled={!msEnabled}
-            onClick={() => msEnabled ? null : toast.info("Microsoft sign-in coming soon — admin needs to add Azure credentials.")}
-            className={`brutal-btn w-full flex items-center justify-center gap-2 mt-3 ${msEnabled ? "bg-white hover:bg-butter" : "bg-white opacity-60 cursor-not-allowed"}`}
-          >
-            <MicrosoftOutlookLogo size={20} weight="bold" /> Continue with Microsoft
-            {!msEnabled && <span className="text-xs text-[#4A4A4A] ml-1">(soon)</span>}
-          </button>
-
           <p className="text-sm mt-6 text-center">
             No account?{" "}
             <Link to="/register" className="font-bold underline underline-offset-4" data-testid="signup-link">Create one</Link>
           </p>
+        </div>
         </div>
       </div>
     </div>

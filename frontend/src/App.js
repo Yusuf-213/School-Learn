@@ -15,6 +15,7 @@ import Focus from "@/pages/Focus";
 import Progress from "@/pages/Progress";
 import Pricing from "@/pages/Pricing";
 import BillingSuccess from "@/pages/BillingSuccess";
+import Help from "@/pages/Help";
 
 function AppRouter() {
   const location = useLocation();
@@ -35,6 +36,7 @@ function AppRouter() {
       <Route path="/progress" element={<ProtectedRoute><Progress /></ProtectedRoute>} />
       <Route path="/pricing" element={<Pricing />} />
       <Route path="/billing/success" element={<ProtectedRoute><BillingSuccess /></ProtectedRoute>} />
+      <Route path="/help" element={<ProtectedRoute><Help /></ProtectedRoute>} />
       <Route path="*" element={<Landing />} />
     </Routes>
   );

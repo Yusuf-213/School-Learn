@@ -89,6 +89,13 @@ class AIChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
 
+class HomeworkHelpRequest(BaseModel):
+    problem: str
+    message: Optional[str] = None  # student's reply about what they don't understand
+    grade_level: str
+    subject: Optional[str] = None
+    session_id: Optional[str] = None
+
 class FocusStartRequest(BaseModel):
     duration_minutes: int
     task: str
@@ -552,6 +559,88 @@ async def ai_chat(req: AIChatRequest, current=Depends(get_current_user)):
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     return {"session_id": session_id, "response": response}
+
+@api_router.post("/ai/help")
+async def ai_help(req: HomeworkHelpRequest, current=Depends(get_current_user)):
+    """Socratic homework helper: first diagnose what student doesn't understand, then teach step by step."""
+    plan = await get_user_plan(current)
+    # Gate: daily limit applies
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    used_today = await db.generated_content.count_documents({
+        "user_id": current["user_id"], "created_at": {"$gte": today_start},
+    })
+    used_today += await db.chat_messages.count_documents({
+        "user_id": current["user_id"], "created_at": {"$gte": today_start},
+    })
+    if used_today >= plan["daily_ai_limit"]:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Daily AI limit reached ({plan['daily_ai_limit']}). Upgrade your plan to continue.",
+        )
+
+    grade_map = {
+        "preschool": "preschool age (3-5)", "elementary": "elementary age (6-10)",
+        "middle_school": "middle school age (11-13)", "high_school": "high school age (14-18)",
+        "undergrad": "undergraduate level", "grad": "graduate level", "phd": "PhD level",
+    }
+    level = grade_map.get(req.grade_level, req.grade_level)
+    subject_line = f"Likely subject: {req.subject}.\n" if req.subject else ""
+    system = (
+        "You are ScholarHub Homework Helper, a Socratic tutor for students.\n"
+        "ABSOLUTE RULES:\n"
+        "1. NEVER just give the final answer on the first turn.\n"
+        "2. On the FIRST turn, restate the problem in your own words, then ask the student "
+        "exactly one concise diagnostic question: WHAT part don't they understand "
+        "(e.g., reading the question, a specific step, the underlying concept, vocabulary)?\n"
+        "3. After they tell you, explain ONLY the part they're stuck on, step-by-step, "
+        "with a tiny example. Then prompt them to try the next step themselves.\n"
+        "4. Calibrate language for: " + level + ".\n"
+        "5. Use markdown. Keep each reply under 180 words.\n"
+        "6. Never lecture for more than one concept at a time. Encourage effort.\n"
+        + subject_line
+    )
+
+    session_id = req.session_id or f"help_{current['user_id']}_{uuid.uuid4().hex[:8]}"
+
+    if not req.session_id:
+        # First turn: ingest the problem
+        user_text = f"Here is my homework problem:\n\n{req.problem}\n\nPlease help me — but don't just give the answer."
+    else:
+        if not req.message:
+            raise HTTPException(status_code=400, detail="message required on follow-up turns")
+        user_text = req.message
+
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=session_id,
+        system_message=system,
+    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+
+    try:
+        response = await chat.send_message(UserMessage(text=user_text))
+    except Exception as e:
+        logging.exception("AI help failed")
+        raise HTTPException(status_code=500, detail=f"AI help failed: {str(e)}")
+
+    await db.chat_messages.insert_one({
+        "user_id": current["user_id"],
+        "session_id": session_id,
+        "mode": "homework_help",
+        "problem": req.problem if not req.session_id else None,
+        "user_message": user_text,
+        "ai_response": response,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"session_id": session_id, "response": response}
+
+@api_router.get("/ai/help/history")
+async def ai_help_history(current=Depends(get_current_user)):
+    """Return recent homework-help sessions for the user."""
+    docs = await db.chat_messages.find(
+        {"user_id": current["user_id"], "mode": "homework_help", "problem": {"$ne": None}},
+        {"_id": 0, "session_id": 1, "problem": 1, "created_at": 1},
+    ).sort("created_at", -1).limit(20).to_list(20)
+    return {"items": docs}
 
 # ====================== Focus Mode ======================
 

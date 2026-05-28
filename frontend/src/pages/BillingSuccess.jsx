@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
+import GlobalNav from "@/components/GlobalNav";
 import { CheckCircle, XCircle, Hourglass, GraduationCap } from "@phosphor-icons/react";
 
 export default function BillingSuccess() {
@@ -30,13 +31,10 @@ export default function BillingSuccess() {
   }, [session_id]);
 
   return (
-    <div className="min-h-screen bg-paper flex items-center justify-center p-6">
-      <Link to="/" className="absolute top-6 left-6 flex items-center gap-2">
-        <div className="border-2 border-ink rounded-md bg-mint p-2 shadow-brutal"><GraduationCap size={20} weight="duotone" /></div>
-        <span className="font-display font-black text-xl tracking-tight">ScholarHub</span>
-      </Link>
-
-      <div className="brutal-card p-10 max-w-lg w-full text-center" data-testid="billing-success-card">
+    <div className="min-h-screen bg-paper">
+      <GlobalNav />
+      <div className="flex items-center justify-center p-6 py-12">
+        <div className="brutal-card p-10 max-w-lg w-full text-center" data-testid="billing-success-card">
         {status === "pending" && (
           <>
             <Hourglass size={48} weight="duotone" className="mx-auto mb-4" />
@@ -64,6 +62,7 @@ export default function BillingSuccess() {
             <Link to="/pricing" className="brutal-btn bg-ink text-white inline-block" data-testid="billing-try-again">Try again</Link>
           </>
         )}
+        </div>
       </div>
     </div>
   );

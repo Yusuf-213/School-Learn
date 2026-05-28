@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
+import GlobalNav from "@/components/GlobalNav";
 import { api } from "@/lib/api";
 import { CheckCircle, Sparkle, Crown, Buildings, GraduationCap, XCircle } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
@@ -168,12 +169,11 @@ export default function Pricing() {
   );
 
   return user ? <AppLayout>{inner}</AppLayout> : (
-    <div className="min-h-screen bg-paper p-6 py-16">
-      <Link to="/" className="max-w-6xl mx-auto flex items-center gap-2 mb-10">
-        <div className="border-2 border-ink rounded-md bg-mint p-2 shadow-brutal"><GraduationCap size={22} weight="duotone" /></div>
-        <span className="font-display font-black text-2xl tracking-tight">ScholarHub</span>
-      </Link>
-      {inner}
+    <div className="min-h-screen bg-paper">
+      <GlobalNav />
+      <div className="p-6 py-12">
+        {inner}
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
-import { GraduationCap, Atom, BookOpen, Bank, Barbell, Function, Sparkle, Timer, CheckCircle, ArrowRight } from "@phosphor-icons/react";
+import GlobalNav from "@/components/GlobalNav";
+import { GraduationCap, Atom, BookOpen, Bank, Barbell, Function, Sparkle, Timer, CheckCircle, ArrowRight, Question } from "@phosphor-icons/react";
 
 const SUBJECT_TILES = [
   { name: "Mathematics", color: "#E6F7EB", icon: Function },
@@ -12,22 +13,7 @@ const SUBJECT_TILES = [
 export default function Landing() {
   return (
     <div className="min-h-screen bg-paper text-ink">
-      {/* Nav */}
-      <header className="border-b-2 border-ink bg-paper">
-        <div className="max-w-7xl mx-auto px-6 py-5 flex items-center justify-between">
-          <div className="flex items-center gap-2" data-testid="brand-logo">
-            <div className="border-2 border-ink rounded-md bg-mint p-2 shadow-brutal">
-              <GraduationCap size={22} weight="duotone" />
-            </div>
-            <span className="font-display font-black text-2xl tracking-tight">ScholarHub</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <Link to="/pricing" className="hidden sm:inline-flex brutal-btn bg-white hover:bg-butter text-sm" data-testid="landing-pricing-btn">Pricing</Link>
-            <Link to="/login" className="brutal-btn bg-white hover:bg-butter" data-testid="landing-signin-btn">Sign in</Link>
-            <Link to="/register" className="brutal-btn bg-ink text-white hover:bg-[#2A2A2A]" data-testid="landing-getstarted-btn">Get started</Link>
-          </div>
-        </div>
-      </header>
+      <GlobalNav />
 
       {/* Hero */}
       <section className="max-w-7xl mx-auto px-6 pt-16 pb-20 grid md:grid-cols-2 gap-12 items-center">
@@ -121,6 +107,31 @@ export default function Landing() {
           <Timer size={28} weight="duotone" />
           <h3 className="font-display font-bold text-2xl mt-4 mb-2">Focus Mode</h3>
           <p className="text-[#4A4A4A]">Lock yourself into a single task for X minutes. No tab-switching escape route.</p>
+        </div>
+      </section>
+
+      {/* Homework Helper teaser */}
+      <section className="bg-white border-y-2 border-ink">
+        <div className="max-w-7xl mx-auto px-6 py-16 grid md:grid-cols-2 gap-10 items-center">
+          <div>
+            <div className="text-xs tracking-[0.2em] uppercase font-bold mb-3">New · Homework Helper</div>
+            <h2 className="font-display font-extrabold text-4xl sm:text-5xl tracking-tight mb-4">Stuck on a Sparx problem?</h2>
+            <p className="text-[#4A4A4A] text-lg mb-6 max-w-lg">
+              Paste any question from Sparx Maths, MyMaths, Seneca, a textbook or worksheet. We'll ask what you don't understand — then walk you through it step-by-step. Not just the answer.
+            </p>
+            <Link to="/help" className="brutal-btn bg-ink text-white inline-flex items-center gap-2" data-testid="landing-help-cta">
+              <Question size={18} weight="bold" /> Try Homework Helper
+            </Link>
+          </div>
+          <div className="brutal-card p-6 bg-butter">
+            <div className="text-xs uppercase tracking-[0.2em] font-bold mb-3">Example session</div>
+            <div className="space-y-3 text-sm">
+              <div className="border-2 border-ink rounded-md p-3 bg-white"><strong>You:</strong> Solve 2(x − 3) = 14</div>
+              <div className="border-2 border-ink rounded-md p-3 bg-mint"><strong>ScholarHub:</strong> Got it. Where are you stuck — distributing the 2, isolating x, or checking the answer?</div>
+              <div className="border-2 border-ink rounded-md p-3 bg-white"><strong>You:</strong> Distributing</div>
+              <div className="border-2 border-ink rounded-md p-3 bg-mint"><strong>ScholarHub:</strong> Multiply 2 by both terms inside the bracket: 2·x = 2x, and 2·(−3) = −6. So 2(x−3) = 2x − 6 ...</div>
+            </div>
+          </div>
         </div>
       </section>
 
