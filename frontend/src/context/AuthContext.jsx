@@ -8,6 +8,14 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const checkAuth = useCallback(async () => {
+    // Skip probe entirely if no token AND no cookie likely set
+    const hasToken = typeof window !== "undefined" && localStorage.getItem("token");
+    const hasCookie = typeof document !== "undefined" && document.cookie.includes("session_token");
+    if (!hasToken && !hasCookie) {
+      setUser(null);
+      setLoading(false);
+      return;
+    }
     try {
       const { data } = await api.get("/auth/me");
       setUser(data);
