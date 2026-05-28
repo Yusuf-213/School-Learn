@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import AppLayout from "@/components/AppLayout";
-import { SUBJECTS, GRADE_LEVELS } from "@/lib/subjects";
+import GradeLevelSelect from "@/components/GradeLevelSelect";
+import { SUBJECTS, gradeLevelLabel } from "@/lib/subjects";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Atom, BookOpen, Bank, Barbell, Function, Sparkle, Timer, ArrowRight, Trophy, Clock } from "@phosphor-icons/react";
@@ -28,7 +29,7 @@ export default function Dashboard() {
     await refreshUser();
   };
 
-  const gradeLabel = GRADE_LEVELS.find((g) => g.value === user?.grade_level)?.label || "—";
+  const gradeLabel = gradeLevelLabel(user?.grade_level);
 
   return (
     <AppLayout>
@@ -44,14 +45,12 @@ export default function Dashboard() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <label className="text-xs tracking-[0.2em] uppercase font-bold">Grade</label>
-            <select
-              data-testid="dashboard-grade-select"
-              value={user?.grade_level || "high_school"}
-              onChange={(e) => updateGrade(e.target.value)}
-              className="brutal-input bg-white py-2"
-            >
-              {GRADE_LEVELS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
-            </select>
+            <GradeLevelSelect
+              testId="dashboard-grade-select"
+              value={user?.grade_level || "uk_y10"}
+              onChange={(v) => updateGrade(v)}
+              className="py-2"
+            />
           </div>
         </div>
 

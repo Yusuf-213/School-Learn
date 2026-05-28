@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
-import { findSubject, findTopic, GRADE_LEVELS, EXAM_BOARDS } from "@/lib/subjects";
+import { findSubject, findTopic, gradeLevelLabel, EXAM_BOARDS } from "@/lib/subjects";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { ArrowLeft, Sparkle, Lightbulb, Cards, Question, ChatCircleDots, PaperPlaneTilt, ArrowRight, CheckCircle, XCircle, ArrowsClockwise, FileText, Printer } from "@phosphor-icons/react";
@@ -90,7 +90,7 @@ export default function Topic() {
             <div className="text-sm">
               <div className="text-xs uppercase tracking-[0.2em] font-bold mb-2">Level</div>
               <div className="brutal-input bg-white py-2 px-3 text-sm">
-                {GRADE_LEVELS.find((g) => g.value === user?.grade_level)?.label || "High School"}
+                {gradeLevelLabel(user?.grade_level) || "High School"}
               </div>
             </div>
             <button

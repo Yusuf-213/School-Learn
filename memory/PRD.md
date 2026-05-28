@@ -1,45 +1,27 @@
 # ScholarHub — Product Requirements
 
 ## Original Problem
-Build a student revision app covering Math, English, Science, History, PE. Expanded to include all academic subjects, foreign languages, arts, vocational, humanities. Subscription plans (UK GBP). Persistent navigation. Homework Helper (Socratic AI tutor for pasted problems).
+Build a student revision app covering Math, English, Science, History, PE — expanded with foreign languages, arts, vocational, humanities. UK pricing. Persistent nav. Homework Helper. International grade-level support.
 
-## User Choices (latest)
-- VPN: skipped.
-- Time-limit blocker: replaced with **Focus Mode** (in-app full-screen timer).
-- Content: AI-generated using Claude Sonnet 4.5 via Emergent LLM key.
-- Auth: Email/password (JWT) + Emergent Google OAuth. **No Microsoft login** (no licence).
-- Grade levels: Preschool → PhD.
-- Subjects: 23 across 6 categories (Core, Languages, Arts, PE, Tech/Vocational, Humanities).
-- Pricing (GBP): Free / £5 Basic / £10 Standard / £15 Pro / £500/year whole school.
-- Persistent global nav on every page: **Home, Classes, Homework Help, Plans, Sign in/Sign out**.
-- Homework Helper: paste any problem (Sparx, MyMaths, textbook), Socratic AI asks what you don't understand first, then teaches just that part.
+## User Choices
+- VPN skipped, Focus Mode for in-app lockdown.
+- AI content via Claude Sonnet 4.5 (Emergent LLM key).
+- Auth: Email/password (JWT) + Emergent Google. No Microsoft.
+- Subjects: 23 across 6 categories.
+- Pricing (GBP): Free / £5 / £10 / £15 / £500/yr school.
+- Persistent GlobalNav on every page.
+- **Grade levels (iter 4)**: Full international support — UK Years 7–13 (KS3/GCSE/AS/A2), US Grades 9–12, Canada 9–12, Australia Years 7–12, Germany Sekundarstufe I/II, Japan 中学校/高校, China 初中/高中, plus ISCED-2/3 generic and Early Years and Higher Ed. All AI prompts calibrate to the chosen system.
 
 ## Implemented
-### Backend (FastAPI + MongoDB)
-- JWT email auth + Emergent Google session exchange.
-- Stripe Checkout subscriptions via emergentintegrations (idempotent activation, webhook).
-- AI generation endpoints (summary, quiz, flashcards, explanation, paper) with subscription gating.
-- **`/api/ai/help`** — Socratic Homework Helper with first-turn diagnostic, then targeted teaching. System prompt: "NEVER just give the final answer on the first turn."
-- `/api/ai/help/history` — recent problems started.
-- Focus session lifecycle, progress tracking, stats.
+- **Backend**: JWT auth, Emergent Google, Stripe Checkout subs, AI generation (5 types + papers), Socratic Homework Helper, focus sessions, progress, stats. `_grade_descriptor` shared mapping across all AI prompts (summary/quiz/flashcards/explanation/paper/chat/help) — calibrates by country-specific curriculum.
+- **Frontend**: GlobalNav (Home/Classes/Help/Plans/Sign in-out) on every page. `GradeLevelSelect` component with grouped `<optgroup>` (UK, US, Canada, AU, DE, JP, CN, etc.) used in Register, Dashboard, Help, Topic display.
+- **Testing**: 40/40 non-LLM tests pass; LLM-dependent test failed only due to Emergent key budget cap.
 
-### Frontend (React + Tailwind + Shadcn + Phosphor, neo-brutalist)
-- **GlobalNav** persistent on every page: Home, Classes, Homework Help, Plans, Sign in/Sign out (+ Focus, Progress, user menu when logged in). Mobile burger menu.
-- Landing (with Homework Helper teaser), Login, Register, AuthCallback, Dashboard, Subjects (grouped by 6 categories), Subject detail, Topic (5 tabs: Summary, Quiz, Flashcards, Practice Paper, AI Tutor), Focus Mode, Progress, Pricing, Billing Success, **Help (Homework Helper)**.
-
-### Testing
-- 47/47 backend pytest tests pass (26 iter-1 + 14 iter-2 + 7 iter-3).
-- All UI flows verified by testing agent.
-
-## Backlog (P1 / P2)
-- P1: Spaced-repetition flashcard review.
-- P1: Daily streak + email reminders.
-- P1: Save generated content per user with library/search.
-- P1: Real PDF export of practice papers.
-- P1: OCR image upload for Homework Helper (snap a photo of a problem).
-- P2: Teacher dashboard for School plan (per user's request, NOT building this now).
+## Backlog
+- P1: OCR image upload for Homework Helper.
+- P1: Spaced-repetition flashcards, streaks, real PDF export.
+- P2: Teacher dashboard (not yet requested).
 - P2: Split server.py into routers.
-- P2: Lock CORS_ORIGINS for production.
 
-## Next Tasks
-- Wait for user feedback / next feature request.
+## Notes for User
+- **Emergent LLM key budget exceeded** during the last test run. Top up at Profile → Universal Key → Add Balance, or enable auto top-up.

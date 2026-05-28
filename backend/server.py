@@ -327,18 +327,61 @@ async def update_profile(payload: dict, current=Depends(get_current_user)):
 
 # ====================== AI Content Generation ======================
 
+def _grade_descriptor(grade_level: str) -> str:
+    grade_map = {
+        # universal
+        "preschool":        "preschool (ages 3-5), use very simple words, fun analogies and concrete examples",
+        "elementary":       "elementary school (ages 6-10), simple language with relatable examples",
+        # ISCED
+        "lower_secondary":  "lower secondary (ages 11-15), clear and engaging with real-world examples (ISCED 2)",
+        "upper_secondary":  "upper secondary (ages 15-18), rigorous but accessible; include key terminology (ISCED 3)",
+        # UK
+        "uk_y7":            "UK Year 7 (KS3, age 11-12) — accessible introduction with everyday examples",
+        "uk_y8":            "UK Year 8 (KS3, age 12-13) — build on KS3 fundamentals",
+        "uk_y9":            "UK Year 9 (KS3, age 13-14) — bridge to GCSE-level work",
+        "uk_y10":           "UK Year 10 (GCSE, age 14-15) — GCSE specification depth and exam terminology",
+        "uk_y11":           "UK Year 11 (GCSE, age 15-16) — final-GCSE depth, exam-style precision",
+        "uk_y12":           "UK Year 12 (AS / Lower 6th, age 16-17) — A-Level introduction",
+        "uk_y13":           "UK Year 13 (A2 / Upper 6th, age 17-18) — full A-Level depth and rigour",
+        # US
+        "us_g9":            "US Grade 9 (Freshman, age 14-15) — high-school introduction",
+        "us_g10":           "US Grade 10 (Sophomore, age 15-16)",
+        "us_g11":           "US Grade 11 (Junior, age 16-17) — Common Core / AP-prep depth",
+        "us_g12":           "US Grade 12 (Senior, age 17-18) — Honors/AP-level rigour",
+        # Canada
+        "ca_g9":            "Canada Grade 9 (age 14-15)",
+        "ca_g10":           "Canada Grade 10 (age 15-16)",
+        "ca_g11":           "Canada Grade 11 (age 16-17)",
+        "ca_g12":           "Canada Grade 12 (age 17-18) — university-prep depth",
+        # Australia
+        "au_y7":            "Australian Year 7 (age 12-13)",
+        "au_y8":            "Australian Year 8 (age 13-14)",
+        "au_y9":            "Australian Year 9 (age 14-15)",
+        "au_y10":           "Australian Year 10 (age 15-16)",
+        "au_y11":           "Australian Year 11 (age 16-17) — VCE/HSC/QCE preliminary",
+        "au_y12":           "Australian Year 12 (age 17-18) — VCE/HSC/QCE final-year depth",
+        # Germany
+        "de_sek1":          "German Sekundarstufe I (Klasse 5-10, age 10-15) — Hauptschule/Realschule/Gymnasium I",
+        "de_sek2":          "German Sekundarstufe II (Klasse 11-13, age 15-19) — Gymnasium II / Abitur-prep",
+        # Japan
+        "jp_jhs":           "Japanese Junior High 中学校 (age 12-15)",
+        "jp_shs":           "Japanese Senior High 高校 (age 15-18)",
+        # China
+        "cn_jhs":           "Chinese Junior High 初中 (age 12-15)",
+        "cn_shs":           "Chinese Senior High 高中 (age 15-18) — Gaokao-track rigour",
+        # legacy
+        "middle_school":    "middle school (ages 11-13), clear and engaging with real-world examples",
+        "high_school":      "high school (ages 14-18), rigorous but accessible, include key terminology",
+        # higher ed
+        "undergrad":        "undergraduate university level, academic tone with proper terminology and depth",
+        "grad":             "graduate level, advanced concepts and nuanced analysis",
+        "phd":              "PhD level, scholarly tone, cite frameworks and current research directions",
+    }
+    return grade_map.get(grade_level, grade_map["high_school"])
+
 def build_prompt(content_type: str, subject: str, topic: str, sub_topic: Optional[str], grade_level: str) -> tuple[str, str]:
     target = f"{topic}" + (f" — {sub_topic}" if sub_topic else "")
-    grade_map = {
-        "preschool": "preschool (ages 3-5), use very simple words, fun analogies and concrete examples",
-        "elementary": "elementary school (ages 6-10), use simple language with relatable examples",
-        "middle_school": "middle school (ages 11-13), clear and engaging with real-world examples",
-        "high_school": "high school (ages 14-18), rigorous but accessible, include key terminology",
-        "undergrad": "undergraduate university level, academic tone with proper terminology and depth",
-        "grad": "graduate level, advanced concepts and nuanced analysis",
-        "phd": "PhD level, scholarly tone, cite frameworks and current research directions",
-    }
-    grade_desc = grade_map.get(grade_level, grade_map["high_school"])
+    grade_desc = _grade_descriptor(grade_level)
     system = (
         f"You are ScholarHub, an expert tutor specializing in {subject}. "
         f"Calibrate everything for {grade_desc}. "
@@ -383,16 +426,45 @@ def build_paper_prompt(subject: str, topic: str, sub_topic: Optional[str], grade
         "ib": "International Baccalaureate", "cie": "Cambridge International (CIE)",
         "generic": "a generic mock exam",
     }.get(board, "a generic mock exam")
-    grade_map = {
+    paper_level_map = {
         "preschool": "preschool worksheets (pictures + tracing)",
         "elementary": "elementary-level worksheet",
+        "lower_secondary": "lower-secondary assessment (ISCED 2)",
+        "upper_secondary": "upper-secondary exam paper (ISCED 3)",
+        "uk_y7": "UK Year 7 KS3 assessment",
+        "uk_y8": "UK Year 8 KS3 assessment",
+        "uk_y9": "UK Year 9 KS3 assessment",
+        "uk_y10": "UK Year 10 GCSE-style paper",
+        "uk_y11": "UK Year 11 GCSE final-style paper",
+        "uk_y12": "UK Year 12 AS-Level paper",
+        "uk_y13": "UK Year 13 A-Level paper",
+        "us_g9": "US Grade 9 assessment",
+        "us_g10": "US Grade 10 assessment",
+        "us_g11": "US Grade 11 / SAT-prep paper",
+        "us_g12": "US Grade 12 AP-style paper",
+        "ca_g9": "Canada Grade 9 assessment",
+        "ca_g10": "Canada Grade 10 assessment",
+        "ca_g11": "Canada Grade 11 assessment",
+        "ca_g12": "Canada Grade 12 / provincial exam",
+        "au_y7": "Australian Year 7 assessment",
+        "au_y8": "Australian Year 8 assessment",
+        "au_y9": "Australian Year 9 assessment",
+        "au_y10": "Australian Year 10 assessment",
+        "au_y11": "Australian Year 11 VCE/HSC paper",
+        "au_y12": "Australian Year 12 VCE/HSC/QCE final paper",
+        "de_sek1": "German Sekundarstufe I Klassenarbeit",
+        "de_sek2": "German Sekundarstufe II Klausur (Abitur-style)",
+        "jp_jhs": "Japanese 中学校 assessment",
+        "jp_shs": "Japanese 高校 paper",
+        "cn_jhs": "Chinese 初中 assessment",
+        "cn_shs": "Chinese 高中 Gaokao-style paper",
         "middle_school": "middle-school assessment",
-        "high_school": "high-school exam paper (GCSE-equivalent)",
+        "high_school": "high-school exam paper",
         "undergrad": "undergraduate exam paper",
         "grad": "graduate-level exam paper",
         "phd": "PhD-style qualifying exam",
     }
-    paper_level = grade_map.get(grade_level, grade_map["high_school"])
+    paper_level = paper_level_map.get(grade_level, paper_level_map["high_school"])
     system = (
         f"You are an expert examiner writing realistic practice papers for {subject}, "
         f"styled like {board_label}. Be rigorous and authentic to the exam style."
@@ -521,18 +593,9 @@ async def ai_chat(req: AIChatRequest, current=Depends(get_current_user)):
     context = f"Subject: {req.subject}"
     if req.topic:
         context += f"\nCurrent topic: {req.topic}"
-    grade_map = {
-        "preschool": "preschool age (3-5)",
-        "elementary": "elementary age (6-10)",
-        "middle_school": "middle school age (11-13)",
-        "high_school": "high school age (14-18)",
-        "undergrad": "undergraduate level",
-        "grad": "graduate level",
-        "phd": "PhD level",
-    }
     system = (
         f"You are ScholarHub Tutor, a friendly subject expert. "
-        f"Student level: {grade_map.get(req.grade_level, req.grade_level)}. "
+        f"Student level: {_grade_descriptor(req.grade_level)}. "
         f"{context}\n"
         f"Explain step-by-step, use simple analogies first, then deeper detail. "
         f"Keep answers under 200 words unless the student asks for more. Use markdown."
@@ -578,12 +641,7 @@ async def ai_help(req: HomeworkHelpRequest, current=Depends(get_current_user)):
             detail=f"Daily AI limit reached ({plan['daily_ai_limit']}). Upgrade your plan to continue.",
         )
 
-    grade_map = {
-        "preschool": "preschool age (3-5)", "elementary": "elementary age (6-10)",
-        "middle_school": "middle school age (11-13)", "high_school": "high school age (14-18)",
-        "undergrad": "undergraduate level", "grad": "graduate level", "phd": "PhD level",
-    }
-    level = grade_map.get(req.grade_level, req.grade_level)
+    level = _grade_descriptor(req.grade_level)
     subject_line = f"Likely subject: {req.subject}.\n" if req.subject else ""
     system = (
         "You are ScholarHub Homework Helper, a Socratic tutor for students.\n"

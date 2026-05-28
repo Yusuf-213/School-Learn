@@ -2,8 +2,8 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import GlobalNav from "@/components/GlobalNav";
+import GradeLevelSelect from "@/components/GradeLevelSelect";
 import { GraduationCap, GoogleLogo, Warning } from "@phosphor-icons/react";
-import { GRADE_LEVELS } from "@/lib/subjects";
 import { toast } from "sonner";
 
 export default function Register() {
@@ -70,12 +70,14 @@ export default function Register() {
                 className="mt-2 brutal-input w-full" placeholder="At least 6 characters" />
             </label>
             <label className="block">
-              <span className="text-xs uppercase tracking-[0.2em] font-bold">Grade level</span>
-              <select data-testid="register-grade-select" value={form.grade_level}
-                onChange={(e) => setForm({ ...form, grade_level: e.target.value })}
-                className="mt-2 brutal-input w-full bg-white">
-                {GRADE_LEVELS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
-              </select>
+              <span className="text-xs uppercase tracking-[0.2em] font-bold">Grade / year level</span>
+              <GradeLevelSelect
+                testId="register-grade-select"
+                value={form.grade_level}
+                onChange={(v) => setForm({ ...form, grade_level: v })}
+                className="mt-2 w-full"
+              />
+              <span className="text-xs text-[#4A4A4A] mt-1 inline-block">Pick the closest match — we calibrate every lesson to it.</span>
             </label>
 
             <button type="submit" disabled={loading} data-testid="register-submit-btn"

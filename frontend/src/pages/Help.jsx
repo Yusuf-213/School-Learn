@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
+import GradeLevelSelect from "@/components/GradeLevelSelect";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
-import { GRADE_LEVELS, SUBJECTS } from "@/lib/subjects";
+import { SUBJECTS } from "@/lib/subjects";
 import { Question, ClipboardText, PaperPlaneTilt, ArrowsClockwise, Sparkle, Warning } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
@@ -140,13 +141,12 @@ export default function Help() {
               </label>
               <label className="block">
                 <span className="text-xs uppercase tracking-[0.2em] font-bold">Your level</span>
-                <select
-                  data-testid="help-grade-select"
-                  value={gradeLevel} onChange={(e) => setGradeLevel(e.target.value)}
-                  className="mt-2 brutal-input w-full bg-white"
-                >
-                  {GRADE_LEVELS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
-                </select>
+                <GradeLevelSelect
+                  testId="help-grade-select"
+                  value={gradeLevel}
+                  onChange={(v) => setGradeLevel(v)}
+                  className="mt-2 w-full"
+                />
               </label>
             </div>
             <button
