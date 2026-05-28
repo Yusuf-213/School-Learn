@@ -1,0 +1,118 @@
+{
+  "theme": "LIGHT",
+  "archetype": "Archetype 3 (Pastel & Soft) + Neo-Brutalist Twist",
+  "mood": "Calm but Structured. Approachable yet Academic.",
+  "core_principles": [
+    "Neo-Brutalist Academic: Combine soft pastel backgrounds to lower cognitive load with hard, high-contrast borders (2px solid black) for intense structural focus.",
+    "Focus First: The UI should feel like a 'workspace' not a feed. Everything non-essential should be collapsible or secondary.",
+    "Bento Grids: Use asymmetric grids for the marketing page and dense 'Control Room' grids for the student dashboard.",
+    "Visual Hierarchy over Decorative Polish: Use size, weight, and hard shadows to define priority. Avoid muddy gradients."
+  ],
+  "typography": {
+    "strategy": "Swiss Brutalist - High contrast between expressive display and sterile structural text.",
+    "heading_font": "Cabinet Grotesk",
+    "body_font": "IBM Plex Sans",
+    "scales": {
+      "h1": "text-5xl sm:text-6xl tracking-tight font-black",
+      "h2": "text-3xl sm:text-4xl tracking-tight font-extrabold",
+      "h3": "text-xl sm:text-2xl font-bold",
+      "h4": "text-lg font-bold",
+      "body": "text-base leading-relaxed",
+      "overline": "text-xs tracking-[0.2em] uppercase font-bold"
+    },
+    "rules": [
+      "DO NOT use generic sans fonts like Inter or Roboto for headings.",
+      "Headings must have tight letter spacing.",
+      "Hierarchy gap rule: Do not jump more than 2 steps in sizes."
+    ]
+  },
+  "colors": {
+    "background": "#FBF9F6",
+    "surfaces": "#FFFFFF",
+    "text": {
+      "primary": "#111111",
+      "secondary": "#4A4A4A",
+      "inverse": "#FFFFFF"
+    },
+    "borders": "#111111",
+    "accents": {
+      "mint": "#E6F7EB",
+      "yellow": "#FFF9E6",
+      "lavender": "#EBE6F7",
+      "peach": "#FFD8D1",
+      "focus": "#FF4D4D"
+    },
+    "rules": [
+      "All containers and cards must have a solid 2px border using the border color.",
+      "Never use pure #000000 or #808080. The text primary is #111111.",
+      "No full-screen gradients. Keep colors flat and structural."
+    ]
+  },
+  "layout_and_spacing": {
+    "spacing_scale": "p-4, p-6, p-8, p-12 (use generous spacing inside cards)",
+    "marketing_grid": "Mode A: Tetris Grid. Asymmetrical layouts, mixed block sizes, heavy use of gap-8.",
+    "dashboard_grid": "Mode B: Control Room Grid. 3 or 4 columns, tight gap-4 or gap-6. Highly scannable.",
+    "rules": [
+      "Mobile-first responsive grids.",
+      "Containers with borders MUST have generous padding (p-6 or p-8).",
+      "Dashboard: use a collapsible left sidebar to minimize distraction."
+    ]
+  },
+  "components": {
+    "strategy": "Shadcn UI heavily customized with Neo-Brutalist styles.",
+    "cards": {
+      "style": "bg-white border-2 border-[#111111] shadow-[4px_4px_0px_#111111] rounded-none md:rounded-lg transition-transform hover:-translate-y-1 hover:shadow-[6px_6px_0px_#111111]"
+    },
+    "buttons": {
+      "primary": "bg-[#111111] text-white font-bold border-2 border-[#111111] rounded-none md:rounded-md px-6 py-3 hover:bg-[#2A2A2A] hover:-translate-y-0.5 transition-all shadow-[4px_4px_0px_#111111]",
+      "secondary": "bg-white text-[#111111] font-bold border-2 border-[#111111] rounded-none md:rounded-md px-6 py-3 hover:bg-[#FFF9E6] transition-all shadow-[4px_4px_0px_#111111]"
+    },
+    "inputs": {
+      "style": "border-2 border-[#111111] rounded-none md:rounded-md focus:ring-0 focus:border-[#FF4D4D] focus:shadow-[4px_4px_0px_#FF4D4D] transition-all bg-white p-3"
+    },
+    "focus_mode": {
+      "style": "Absolute minimalist canvas. Hide all global navigation. Show only a massive countdown timer and the current task. Background transforms to #111111 and text to #FBF9F6 for deep focus."
+    }
+  },
+  "motion": {
+    "rules": [
+      "No slow, airy transitions. Use fast, snappy movements (150ms-200ms).",
+      "Hovering interactive elements should instantly lift (-translate-y-1) and increase the brutalist shadow.",
+      "Focus states must be highly visible and high-contrast."
+    ]
+  },
+  "icons": {
+    "library": "@phosphor-icons/react",
+    "style": "Duotone or Bold weight. Must match the solid, structured feel of the UI."
+  },
+  "media": {
+    "hero_image": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/0e72f85f-e4b0-46dd-a92f-27b937d72463/images/ece9de530abfeb52ba1d5a3daea3272538a3150bc1336cb02f1243a7e7a66590.png",
+      "description": "Minimalist floating book staircase. Use in Marketing landing page hero section. Add a light pastel background."
+    },
+    "math_science_abstract": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/0e72f85f-e4b0-46dd-a92f-27b937d72463/images/3126a2624b9d4675383fb82ff398c0286db95e2852306c008f61408f360f0b38.png",
+      "description": "Abstract Math & Science sphere art. Use for Science/Math subject cards or AI tutor background."
+    },
+    "history_english_abstract": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/0e72f85f-e4b0-46dd-a92f-27b937d72463/images/9b5d83aea235b37e694a1e964f605c7855ed029c570b5b72093a1e22a49958e1.png",
+      "description": "Abstract Roman column / Literature art. Use for English/History subject category cards."
+    },
+    "pe_abstract": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/0e72f85f-e4b0-46dd-a92f-27b937d72463/images/1367fa83f88d8168503e6c91b2faf5b6c43414db41a9aaadb7af3fea52442dfe.png",
+      "description": "Dynamic PE bouncing sphere. Use for Physical Education category."
+    },
+    "student_focused": {
+      "url": "https://images.unsplash.com/photo-1513258496099-48168024aec0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxOTJ8MHwxfHNlYXJjaHwxfHxzdHVkZW50JTIwc3R1ZHlpbmclMjBmb2N1c2VkJTIwbGFwdG9wJTIwY29mZmVlfGVufDB8fHx8MTc3OTk1NjY1Mnww&ixlib=rb-4.1.0&q=85",
+      "description": "Student studying. Use as an accent image in the marketing section (e.g., 'Trusted by students' or 'Focus mode')."
+    }
+  },
+  "instructions_to_main_agent": [
+    "Install @phosphor-icons/react for all icons.",
+    "Use custom Shadcn components: customize them deeply by adding `border-2 border-[#111111]` and `shadow-[4px_4px_0px_#111111]` across cards, buttons, dialogs.",
+    "Do NOT use 'Inter'. Configure tailwind.config.js to load 'Cabinet Grotesk' for sans/headings and 'IBM Plex Sans' for body text.",
+    "Ensure all interactive elements have a `data-testid` attribute.",
+    "For the Focus Mode: Render it as a full-screen overlay/route that hides the sidebar and navigation, showing only the timer, exit lock button, and current task. The background should be dark #111111 for deep focus, reversing the color scheme temporarily.",
+    "Subject colors mapping: Math/Science -> Mint (#E6F7EB), History/English -> Lavender (#EBE6F7), PE -> Peach (#FFD8D1), General -> Butter Yellow (#FFF9E6)."
+  ]
+}
