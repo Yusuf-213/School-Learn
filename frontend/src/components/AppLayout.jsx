@@ -8,7 +8,7 @@ export default function AppLayout({ children }) {
         {children}
       </main>
       <footer className="border-t-2 border-ink py-4 text-center text-xs text-[#4A4A4A]">
-        © {new Date().getFullYear()} ScholarHub · Built for serious learners.
+        © {new Date().getFullYear()} Learnify · Built for serious learners.
       </footer>
     </div>
   );

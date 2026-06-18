@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 5 (Learnify) testing complete. Backend: 18/18 new pytest tests pass. Frontend: all 9 review-request UI flows verified live (Learnify branding, /signup/school multi-step, /register 3-step, /login username-or-email, /owner HQ with stats+schools table+suggestions, /teacher with Lessons/Homework/Detentions, /dreams textarea, /suggestions, /pricing Schools tab with £750/£1,500/£3,000). Found and fixed 1 backend bug: POST /api/auth/signup_school was returning a MongoDB ObjectId in the response (500 ISE) because school_doc and admin_user still had _id after insert_one. Added _id pops. After fix, signup succeeds end-to-end and duplicate-domain check returns 400. Owner login with identifier='Yusufm_1' + password='The_Underdog' returns role=owner and frontend nav exposes Owner HQ link.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_learnify_iter5.py",
+    "/app/test_reports/pytest/iter5_learnify.xml"
+  ],
+  "action_items": [
+    "(Carry-over, optional) server.py is now 1695 lines — please split into routers (auth, owner, teacher, student, billing, ai) for maintainability.",
+    "(Carry-over) /api/billing/checkout still has Literal['basic','standard','pro','school'] in CheckoutCreateRequest — does NOT include school_small/school_medium/school_large, so frontend cannot start checkout for the new school plans (will 422). PLANS dict has the new IDs but the Pydantic schema for checkout was not updated."
+  ],
+  "critical_code_review_comments": [
+    "BUG FIXED: signup_school previously returned the post-insert school_doc and admin_user that still had Mongo ObjectId _id — FastAPI couldn't JSON-encode and returned 500. Fix: pop _id after insert_one. Same pattern exists for other endpoints; spot-checked others use the pattern doc.pop('_id', None) — only signup_school was missing it.",
+    "CheckoutCreateRequest Literal must be widened to include school_small|school_medium|school_large or pricing CTAs for new school tiers will fail with 422.",
+    "is_owner() bypass is well-designed — owner can hit /api/teacher/* and /api/school/* without role friction, which lets you demo every panel from a single account. Verified live (owner created lesson + homework + detention).",
+    "login_username() correctly accepts both email and case-insensitive username via $regex; produces same JWT shape as /auth/login. Good.",
+    "Startup wipe_demo_users_v1 marker is idempotent — verified DB still seeded with only owner after multiple restarts.",
+    "Dream + lesson-plan endpoints both correctly use extract_json + structured prompt; both returned all required fields in live tests (starter/main/plenary/differentiation/homework/success_criteria for lessons; summary/subjects_to_focus/qualifications/extracurricular/first_3_steps for dreams)."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (added 2x _id pops in signup_school)",
+    "/app/backend/tests/test_learnify_iter5.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (18/18 new tests; iter1+2+3 suites still present and unchanged)",
+    "frontend": "100% on all 9 review-request UI checks"
+  },
+  "test_credentials": "Owner: identifier='Yusufm_1' OR email='yusufm_1@outlook.com', password='The_Underdog'. Test individuals are created on demand via /api/auth/register using TEST_*@learnify.example.com (the .test TLD is rejected by EmailStr).",
+  "seed_data_creation": "Tests create transient TEST_ prefixed individuals + 2 TEST schools with unique domains (schXXXXXX.example.com). Owner stats panel now shows 3 schools, 2 suggestions, 3 lessons, 3 dreams, 3 homework from the run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: pytest /app/backend/tests/test_learnify_iter5.py — 18 tests, ~80s (most time is 2x Claude calls for lesson + dream). Owner JWT obtained via POST /api/auth/login_username {identifier:'Yusufm_1',password:'The_Underdog'}. Pydantic v2 EmailStr REJECTS the .test TLD as reserved — always use *.example.com for test emails. signup_school requires contact_email's domain to match school_email_domain exactly. New school plans in PLANS: school_small (£750), school_medium (£1500), school_large (£3000). Note: CheckoutCreateRequest.plan_id Literal in server.py was NOT updated to include the new school_* IDs — billing/checkout for school plans will 422 today (test not included in suite to avoid live Stripe call). Frontend login input is a single field accepting email OR username (data-testid='login-email-input'); password is data-testid='login-password-input'.",
+  "rca of the issue": "signup_school 500: motor's insert_one mutates the passed dict by adding `_id` (ObjectId). The endpoint returned `{**school_doc}` and `admin_user` directly, so FastAPI's jsonable_encoder hit a non-serialisable ObjectId. Repro: POST /api/auth/signup_school with valid domain-matching payload → 500 ISE; backend.err.log shows `TypeError: 'ObjectId' object is not iterable`. Fix: pop `_id` after each insert_one (2 lines added). After fix: signup returns 200 with token + school + user, duplicate domain returns 400 as designed."
+}

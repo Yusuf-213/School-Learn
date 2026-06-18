@@ -39,14 +39,39 @@ PLANS = {
     "basic":    {"name": "Basic",    "amount": 5.00,   "currency": "gbp", "period": "month", "daily_ai_limit": 30,   "papers": True,  "exam_boards": False},
     "standard": {"name": "Standard", "amount": 10.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": False},
     "pro":      {"name": "Pro",      "amount": 15.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": True},
-    "school":   {"name": "School (annual)", "amount": 500.00, "currency": "gbp", "period": "year",  "daily_ai_limit": 9999, "papers": True,  "exam_boards": True},
+    # School plans (annual). Stripe Checkout creates one-off £ session; activation gives 365 days.
+    "school_small":  {"name": "School · Small (600–1,000 students)",   "amount": 750.00,  "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1000},
+    "school_medium": {"name": "School · Medium (750–1,500 students)",  "amount": 1500.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1500},
+    "school_large":  {"name": "School · Large (1,500+ students)",      "amount": 3000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 99999},
 }
+
+# Owner account — single global super-admin
+OWNER_EMAIL = "yusufm_1@outlook.com"
+OWNER_USERNAME = "Yusufm_1"
+OWNER_PASSWORD = "The_Underdog"
 
 client = AsyncIOMotorClient(mongo_url)
 db = client[db_name]
 
-app = FastAPI(title="ScholarHub API")
+app = FastAPI(title="Learnify API")
 api_router = APIRouter(prefix="/api")
+
+# ====================== Helpers — role guards ======================
+
+def require_role(*allowed_roles):
+    async def _dep(current=Depends(lambda: None)):  # placeholder
+        return current
+    return _dep
+
+ROLE_OWNER = "owner"
+ROLE_SCHOOL_ADMIN = "school_admin"
+ROLE_TEACHER = "teacher"
+ROLE_STUDENT = "student"
+ROLE_INDIVIDUAL = "individual"
+ALL_ROLES = {ROLE_OWNER, ROLE_SCHOOL_ADMIN, ROLE_TEACHER, ROLE_STUDENT, ROLE_INDIVIDUAL}
+
+def is_owner(user: dict) -> bool:
+    return user and (user.get("role") == ROLE_OWNER or user.get("email", "").lower() == OWNER_EMAIL.lower())
 
 # ====================== Models ======================
 
@@ -175,7 +200,7 @@ async def get_current_user(
 
 @api_router.get("/")
 async def root():
-    return {"message": "ScholarHub API", "status": "ok"}
+    return {"message": "Learnify API", "status": "ok"}
 
 # ====================== Auth: Email/Password ======================
 
@@ -190,9 +215,11 @@ async def register(req: RegisterRequest):
         "name": req.name,
         "email": req.email.lower(),
         "password_hash": hash_password(req.password),
-        "grade_level": req.grade_level or "high_school",
+        "grade_level": req.grade_level or "uk_y10",
         "picture": None,
         "provider": "email",
+        "role": ROLE_INDIVIDUAL,
+        "school_id": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
@@ -206,6 +233,8 @@ async def register(req: RegisterRequest):
             "picture": None,
             "grade_level": doc["grade_level"],
             "provider": "email",
+            "role": ROLE_INDIVIDUAL,
+            "school_id": None,
         },
     }
 
@@ -224,8 +253,10 @@ async def login(req: LoginRequest):
             "name": user["name"],
             "email": user["email"],
             "picture": user.get("picture"),
-            "grade_level": user.get("grade_level", "high_school"),
+            "grade_level": user.get("grade_level", "uk_y10"),
             "provider": user.get("provider", "email"),
+            "role": user.get("role", ROLE_INDIVIDUAL),
+            "school_id": user.get("school_id"),
         },
     }
 
@@ -1009,6 +1040,636 @@ async def microsoft_auth(req: MicrosoftAuthRequest):
             "picture": user.get("picture"),
             "grade_level": user.get("grade_level", "high_school"),
             "provider": "microsoft",
+        },
+    }
+
+# ====================== Schools, Lessons, Homework, Detentions, etc. ======================
+
+class SchoolSignupRequest(BaseModel):
+    school_name: str
+    school_email_domain: str  # e.g. "schoolname.org" — students/teachers sign up with @schoolname.org emails
+    contact_name: str
+    contact_email: EmailStr
+    contact_password: str
+    approx_students: int
+    students_per_class: int
+    class_names: List[str]  # e.g. ["8x1","9y6"]
+    slt_emails: List[str] = []
+    plan_id: Optional[str] = None  # which school plan they intend to buy
+
+class ClassCreate(BaseModel):
+    name: str
+    year_group: Optional[str] = None
+    subject: Optional[str] = None
+
+class LessonCreate(BaseModel):
+    title: str
+    subject: str
+    year_group: Optional[str] = None
+    class_id: Optional[str] = None
+    duration_minutes: int = 60
+    objectives: Optional[str] = None
+    use_ai: bool = True
+
+class HomeworkCreate(BaseModel):
+    title: str
+    subject: str
+    class_id: str
+    instructions: str
+    due_date: Optional[str] = None
+    max_score: int = 100
+
+class HomeworkSubmit(BaseModel):
+    homework_id: str
+    student_answers: str
+
+class DetentionCreate(BaseModel):
+    student_user_id: str
+    reason: str
+    date: str  # ISO date
+    duration_minutes: int = 30
+
+class AttendanceMark(BaseModel):
+    class_id: str
+    date: str
+    entries: List[dict]  # [{student_user_id, status}]
+
+class AchievementAward(BaseModel):
+    student_user_id: str
+    points: int
+    reason: str
+
+class DreamSubmit(BaseModel):
+    dream: str
+
+class SuggestionSubmit(BaseModel):
+    category: str  # 'bug','feature','content','other'
+    message: str
+
+# --- school helpers ---
+
+async def get_user_school(user: dict) -> Optional[dict]:
+    sid = user.get("school_id")
+    if not sid:
+        return None
+    return await db.schools.find_one({"school_id": sid}, {"_id": 0})
+
+def require_authed_role(*roles):
+    async def _dep(current=Depends(get_current_user)):
+        if is_owner(current):
+            return current  # owner has every permission
+        if current.get("role") not in roles:
+            raise HTTPException(status_code=403, detail=f"Requires role: {', '.join(roles)}")
+        return current
+    return _dep
+
+# ====================== School signup ======================
+
+@api_router.post("/auth/signup_school")
+async def signup_school(req: SchoolSignupRequest):
+    domain = req.school_email_domain.lower().lstrip("@")
+    contact_email = req.contact_email.lower()
+
+    # Domain must match the contact email
+    if not contact_email.endswith("@" + domain):
+        raise HTTPException(status_code=400, detail=f"Contact email must end with @{domain}")
+
+    # Existing school with same domain?
+    if await db.schools.find_one({"email_domain": domain}):
+        raise HTTPException(status_code=400, detail="A school with this email domain already exists.")
+    if await db.users.find_one({"email": contact_email}):
+        raise HTTPException(status_code=400, detail="That email is already registered.")
+
+    school_id = f"school_{uuid.uuid4().hex[:10]}"
+    school_doc = {
+        "school_id": school_id,
+        "name": req.school_name,
+        "email_domain": domain,
+        "approx_students": req.approx_students,
+        "students_per_class": req.students_per_class,
+        "class_names": [c.strip() for c in req.class_names if c.strip()],
+        "slt_emails": [e.lower().strip() for e in req.slt_emails if e.strip()],
+        "plan_id": req.plan_id,
+        "subscription_tier": "free",
+        "subscription_expires_at": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.schools.insert_one(school_doc)
+    school_doc.pop("_id", None)
+
+    # Create school_admin user
+    user_id = f"user_{uuid.uuid4().hex[:12]}"
+    admin_user = {
+        "user_id": user_id,
+        "name": req.contact_name,
+        "email": contact_email,
+        "password_hash": hash_password(req.contact_password),
+        "grade_level": "uk_y10",
+        "picture": None,
+        "provider": "email",
+        "role": ROLE_SCHOOL_ADMIN,
+        "school_id": school_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(admin_user)
+    admin_user.pop("_id", None)
+
+    # Pre-create the class shells
+    for cname in school_doc["class_names"]:
+        await db.classes.insert_one({
+            "class_id": f"class_{uuid.uuid4().hex[:10]}",
+            "school_id": school_id,
+            "name": cname,
+            "year_group": cname[:2] if len(cname) >= 2 else None,
+            "subject": None,
+            "teacher_emails": [],
+            "student_emails": [],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    token = make_jwt(user_id)
+    return {
+        "token": token,
+        "school": {**school_doc},
+        "user": {
+            "user_id": user_id, "name": req.contact_name, "email": contact_email,
+            "role": ROLE_SCHOOL_ADMIN, "school_id": school_id, "grade_level": "uk_y10",
+        }
+    }
+
+# ====================== Owner endpoints ======================
+
+@api_router.get("/owner/schools")
+async def owner_schools(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    schools = await db.schools.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    # Augment with counts
+    out = []
+    for s in schools:
+        student_count = await db.users.count_documents({"school_id": s["school_id"], "role": ROLE_STUDENT})
+        teacher_count = await db.users.count_documents({"school_id": s["school_id"], "role": ROLE_TEACHER})
+        homework_count = await db.homework.count_documents({"school_id": s["school_id"]})
+        classes_count = await db.classes.count_documents({"school_id": s["school_id"]})
+        out.append({**s,
+                    "student_count": student_count,
+                    "teacher_count": teacher_count,
+                    "classes_count": classes_count,
+                    "homework_count": homework_count})
+    return {"schools": out}
+
+@api_router.get("/owner/stats")
+async def owner_stats(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    return {
+        "schools": await db.schools.count_documents({}),
+        "users": await db.users.count_documents({}),
+        "students": await db.users.count_documents({"role": ROLE_STUDENT}),
+        "teachers": await db.users.count_documents({"role": ROLE_TEACHER}),
+        "homework": await db.homework.count_documents({}),
+        "lessons": await db.lessons.count_documents({}),
+        "paying_schools": await db.schools.count_documents({"subscription_tier": {"$in": ["school_small", "school_medium", "school_large"]}}),
+        "dreams": await db.dreams.count_documents({}),
+        "suggestions": await db.suggestions.count_documents({}),
+    }
+
+@api_router.get("/owner/suggestions")
+async def owner_suggestions(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    items = await db.suggestions.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"items": items}
+
+# ====================== School admin ======================
+
+@api_router.get("/school/me")
+async def school_me(current=Depends(get_current_user)):
+    school = await get_user_school(current)
+    if not school:
+        raise HTTPException(status_code=404, detail="Not part of a school")
+    classes = await db.classes.find({"school_id": school["school_id"]}, {"_id": 0}).to_list(500)
+    return {"school": school, "classes": classes}
+
+@api_router.post("/school/classes")
+async def create_class(payload: ClassCreate, current=Depends(get_current_user)):
+    if current.get("role") not in {ROLE_SCHOOL_ADMIN, ROLE_TEACHER} and not is_owner(current):
+        raise HTTPException(status_code=403, detail="School admin or teacher only")
+    sid = current.get("school_id")
+    if not sid and not is_owner(current):
+        raise HTTPException(status_code=400, detail="No school")
+    doc = {
+        "class_id": f"class_{uuid.uuid4().hex[:10]}",
+        "school_id": sid,
+        "name": payload.name,
+        "year_group": payload.year_group,
+        "subject": payload.subject,
+        "teacher_emails": [],
+        "student_emails": [],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.classes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+# ====================== Teacher: lessons ======================
+
+@api_router.post("/teacher/lessons")
+async def create_lesson(req: LessonCreate, current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+    lesson_id = f"lesson_{uuid.uuid4().hex[:10]}"
+    plan_json = None
+
+    if req.use_ai:
+        system = (
+            f"You are Learnify Lesson Planner — an expert UK teacher creating a {req.duration_minutes}-minute lesson "
+            f"on {req.subject}. Calibrate for {_grade_descriptor(req.year_group or 'uk_y10')}. "
+            f"Be specific, practical, and exam-aware."
+        )
+        user_text = (
+            f"Plan a lesson titled: {req.title}.\n"
+            f"Learning objectives: {req.objectives or 'inferred from the title'}.\n"
+            f"Duration: {req.duration_minutes} minutes.\n\n"
+            f"Return STRICT JSON:\n"
+            f'{{"title":"string","objectives":["string"],"starter":{{"duration_min":0,"activity":"string"}},'
+            f'"main":[{{"duration_min":0,"activity":"string","teacher_notes":"string","resources":["string"]}}],'
+            f'"plenary":{{"duration_min":0,"activity":"string"}},'
+            f'"differentiation":{{"support":"string","stretch":"string"}},'
+            f'"homework":"string","success_criteria":["string"]}}\n'
+            f"3–4 main activities. No prose outside JSON."
+        )
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=lesson_id, system_message=system).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        try:
+            response = await chat.send_message(UserMessage(text=user_text))
+            plan_json = extract_json(response)
+        except Exception as e:
+            logging.exception("lesson plan AI failed")
+            raise HTTPException(status_code=500, detail=f"Lesson plan AI failed: {e}")
+
+    doc = {
+        "lesson_id": lesson_id,
+        "school_id": current.get("school_id"),
+        "teacher_user_id": current["user_id"],
+        "title": req.title,
+        "subject": req.subject,
+        "year_group": req.year_group,
+        "class_id": req.class_id,
+        "duration_minutes": req.duration_minutes,
+        "objectives": req.objectives,
+        "plan": plan_json,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.lessons.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.get("/teacher/lessons")
+async def list_lessons(current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+    q = {} if is_owner(current) else {"teacher_user_id": current["user_id"]}
+    items = await db.lessons.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"items": items}
+
+@api_router.get("/teacher/lessons/{lesson_id}")
+async def get_lesson(lesson_id: str, current=Depends(get_current_user)):
+    item = await db.lessons.find_one({"lesson_id": lesson_id}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Not found")
+    return item
+
+# ====================== Teacher: homework + AI analysis ======================
+
+@api_router.post("/teacher/homework")
+async def create_homework(req: HomeworkCreate, current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+    doc = {
+        "homework_id": f"hw_{uuid.uuid4().hex[:10]}",
+        "school_id": current.get("school_id"),
+        "teacher_user_id": current["user_id"],
+        "class_id": req.class_id,
+        "title": req.title,
+        "subject": req.subject,
+        "instructions": req.instructions,
+        "due_date": req.due_date,
+        "max_score": req.max_score,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.homework.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.get("/teacher/homework")
+async def list_homework(current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+    q = {} if is_owner(current) else {"school_id": current.get("school_id")}
+    items = await db.homework.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"items": items}
+
+@api_router.post("/teacher/homework/{homework_id}/analyze")
+async def analyze_homework(homework_id: str, current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+    hw = await db.homework.find_one({"homework_id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    subs = await db.homework_submissions.find({"homework_id": homework_id}, {"_id": 0}).to_list(500)
+    if not subs:
+        return {"analysis": None, "message": "No submissions yet."}
+
+    avg = sum(s.get("score", 0) for s in subs) / len(subs)
+    submissions_summary = [
+        f"- {s.get('student_name','Student')}: scored {s.get('score',0)}/{hw['max_score']}. Notes: {s.get('notes','')[:200]}"
+        for s in subs
+    ]
+    system = (
+        "You are Learnify Insight, an experienced teacher analyst. Be specific, kind, actionable. "
+        "Use markdown."
+    )
+    user_text = (
+        f"Homework: {hw['title']} ({hw['subject']}).\n"
+        f"Class average: {avg:.1f}/{hw['max_score']}.\n\n"
+        f"Submissions ({len(subs)}):\n" + "\n".join(submissions_summary) + "\n\n"
+        f"Return STRICT JSON:\n"
+        f'{{"class_overview":"string (3-5 sentences)",'
+        f'"top_misconceptions":["string"],'
+        f'"recommended_next_lesson":["string (3 specific topics/activities)"],'
+        f'"individual":[{{"student":"name","score":0,"expected_grade":"string","strengths":"string","weaknesses":"string","next_steps":"string"}}]}}\n'
+        f"Expected grades should follow UK system (e.g., GCSE 9–1 or A*–G), realistic for the score. No prose outside JSON."
+    )
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"hw_{homework_id}", system_message=system).with_model("anthropic", "claude-sonnet-4-5-20250929")
+    try:
+        response = await chat.send_message(UserMessage(text=user_text))
+        analysis = extract_json(response)
+    except Exception as e:
+        logging.exception("homework analysis failed")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
+
+    await db.homework.update_one(
+        {"homework_id": homework_id},
+        {"$set": {"analysis": analysis, "analyzed_at": datetime.now(timezone.utc).isoformat(), "class_average": avg}},
+    )
+    return {"analysis": analysis, "class_average": avg, "submissions_count": len(subs)}
+
+@api_router.post("/student/homework/submit")
+async def submit_homework(req: HomeworkSubmit, current=Depends(get_current_user)):
+    hw = await db.homework.find_one({"homework_id": req.homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    # AI score: ask Claude to score 0–max and give notes
+    system = "You are a fair examiner. Output STRICT JSON only."
+    user_text = (
+        f"Mark this {hw['subject']} homework out of {hw['max_score']}:\n\n"
+        f"Question/instructions:\n{hw['instructions']}\n\n"
+        f"Student answer:\n{req.student_answers}\n\n"
+        f'Return: {{"score":0,"notes":"string (≤80 words)","expected_grade":"GCSE 1–9 or appropriate grade"}}'
+    )
+    score = 0; notes = ""; grade = ""
+    try:
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"hwsub_{uuid.uuid4().hex[:8]}", system_message=system).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        response = await chat.send_message(UserMessage(text=user_text))
+        data = extract_json(response)
+        score = int(data.get("score", 0))
+        notes = data.get("notes", "")
+        grade = data.get("expected_grade", "")
+    except Exception:
+        score = 0
+        notes = "Submitted (AI marking unavailable; teacher will mark)."
+
+    await db.homework_submissions.insert_one({
+        "homework_id": req.homework_id,
+        "student_user_id": current["user_id"],
+        "student_name": current.get("name"),
+        "answers": req.student_answers,
+        "score": score,
+        "notes": notes,
+        "expected_grade": grade,
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"score": score, "notes": notes, "expected_grade": grade, "max_score": hw["max_score"]}
+
+@api_router.get("/student/homework")
+async def student_homework(current=Depends(get_current_user)):
+    sid = current.get("school_id")
+    if not sid:
+        return {"items": []}
+    items = await db.homework.find({"school_id": sid}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    # attach own submission if exists
+    out = []
+    for hw in items:
+        sub = await db.homework_submissions.find_one(
+            {"homework_id": hw["homework_id"], "student_user_id": current["user_id"]}, {"_id": 0}
+        )
+        out.append({**hw, "submission": sub})
+    return {"items": out}
+
+# ====================== Teacher: detentions, attendance, achievements ======================
+
+@api_router.post("/teacher/detention")
+async def set_detention(req: DetentionCreate, current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+    doc = {
+        "detention_id": f"det_{uuid.uuid4().hex[:8]}",
+        "school_id": current.get("school_id"),
+        "set_by": current["user_id"],
+        "set_by_name": current.get("name"),
+        "student_user_id": req.student_user_id,
+        "reason": req.reason,
+        "date": req.date,
+        "duration_minutes": req.duration_minutes,
+        "status": "set",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.detentions.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.get("/teacher/detentions")
+async def list_detentions(current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+    items = await db.detentions.find(
+        {"school_id": current.get("school_id")}, {"_id": 0}
+    ).sort("date", -1).to_list(500)
+    return {"items": items}
+
+@api_router.get("/student/my-detentions")
+async def my_detentions(current=Depends(get_current_user)):
+    items = await db.detentions.find(
+        {"student_user_id": current["user_id"]}, {"_id": 0}
+    ).sort("date", -1).to_list(200)
+    return {"items": items}
+
+@api_router.post("/teacher/attendance")
+async def mark_attendance(req: AttendanceMark, current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+    for e in req.entries:
+        await db.attendance.update_one(
+            {"class_id": req.class_id, "date": req.date, "student_user_id": e["student_user_id"]},
+            {"$set": {
+                "class_id": req.class_id, "date": req.date,
+                "student_user_id": e["student_user_id"], "status": e.get("status", "present"),
+                "marked_by": current["user_id"],
+                "school_id": current.get("school_id"),
+                "marked_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+    return {"ok": True, "count": len(req.entries)}
+
+@api_router.get("/student/my-attendance")
+async def my_attendance(current=Depends(get_current_user)):
+    items = await db.attendance.find(
+        {"student_user_id": current["user_id"]}, {"_id": 0}
+    ).sort("date", -1).to_list(365)
+    total = len(items)
+    present = sum(1 for i in items if i.get("status") == "present")
+    return {"items": items, "rate": (present / total * 100) if total else 100.0, "total": total, "present": present}
+
+@api_router.post("/teacher/achievement")
+async def award_achievement(req: AchievementAward, current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+    doc = {
+        "achievement_id": f"ach_{uuid.uuid4().hex[:8]}",
+        "school_id": current.get("school_id"),
+        "student_user_id": req.student_user_id,
+        "awarded_by": current["user_id"],
+        "awarded_by_name": current.get("name"),
+        "points": req.points,
+        "reason": req.reason,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.achievements.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.get("/student/my-achievements")
+async def my_achievements(current=Depends(get_current_user)):
+    items = await db.achievements.find(
+        {"student_user_id": current["user_id"]}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    total = sum(i.get("points", 0) for i in items)
+    return {"items": items, "total_points": total}
+
+# ====================== Dreams & Suggestions ======================
+
+@api_router.post("/student/dreams")
+async def submit_dream(req: DreamSubmit, current=Depends(get_current_user)):
+    system = (
+        "You are Learnify Compass — a warm, realistic career and life mentor. "
+        f"Student level: {_grade_descriptor(current.get('grade_level', 'uk_y10'))}. "
+        "Be specific, encouraging, and honest. Use markdown."
+    )
+    user_text = (
+        f"My dream: {req.dream}\n\n"
+        f"Map a route. Return STRICT JSON:\n"
+        f'{{"summary":"string (2 sentences)",'
+        f'"subjects_to_focus":["string"],'
+        f'"qualifications":[{{"stage":"GCSE/A-Level/Degree/etc","details":"string"}}],'
+        f'"extracurricular":["string"],'
+        f'"first_3_steps":["string"],'
+        f'"realistic_challenges":["string"],'
+        f'"timeframe_years":0}}\n'
+        f"Be specific to the UK system. No prose outside JSON."
+    )
+    try:
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"dream_{uuid.uuid4().hex[:8]}", system_message=system).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        response = await chat.send_message(UserMessage(text=user_text))
+        plan = extract_json(response)
+    except Exception as e:
+        logging.exception("dream plan failed")
+        raise HTTPException(status_code=500, detail=f"AI failed: {e}")
+
+    doc = {
+        "dream_id": f"dream_{uuid.uuid4().hex[:8]}",
+        "user_id": current["user_id"],
+        "dream": req.dream,
+        "plan": plan,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.dreams.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+@api_router.get("/student/dreams")
+async def list_dreams(current=Depends(get_current_user)):
+    items = await db.dreams.find({"user_id": current["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(20)
+    return {"items": items}
+
+@api_router.post("/suggestions")
+async def submit_suggestion(req: SuggestionSubmit, current=Depends(get_current_user)):
+    doc = {
+        "suggestion_id": f"sug_{uuid.uuid4().hex[:8]}",
+        "user_id": current["user_id"],
+        "user_email": current.get("email"),
+        "user_name": current.get("name"),
+        "category": req.category,
+        "message": req.message,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.suggestions.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+# ====================== Startup: seed owner & wipe demo users ======================
+
+@app.on_event("startup")
+async def startup():
+    # Seed/refresh owner account
+    owner = await db.users.find_one({"email": OWNER_EMAIL.lower()})
+    if not owner:
+        await db.users.insert_one({
+            "user_id": "owner_yusufm_1",
+            "name": "Yusufm_1",
+            "username": OWNER_USERNAME,
+            "email": OWNER_EMAIL.lower(),
+            "password_hash": hash_password(OWNER_PASSWORD),
+            "grade_level": "uk_y10",
+            "picture": None,
+            "provider": "email",
+            "role": ROLE_OWNER,
+            "school_id": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        logging.info("Seeded owner: %s", OWNER_EMAIL)
+    else:
+        # Ensure role and password are correct
+        await db.users.update_one(
+            {"email": OWNER_EMAIL.lower()},
+            {"$set": {
+                "role": ROLE_OWNER,
+                "username": OWNER_USERNAME,
+                "name": "Yusufm_1",
+                "password_hash": hash_password(OWNER_PASSWORD),
+            }}
+        )
+
+    # ONE-TIME demo data wipe: keep only the owner. Marker doc ensures it runs once.
+    marker = await db.meta.find_one({"key": "wipe_demo_users_v1"})
+    if not marker:
+        deleted = await db.users.delete_many({"email": {"$ne": OWNER_EMAIL.lower()}})
+        await db.user_sessions.delete_many({})
+        await db.payment_transactions.delete_many({})
+        await db.generated_content.delete_many({})
+        await db.chat_messages.delete_many({})
+        await db.focus_sessions.delete_many({})
+        await db.progress.delete_many({})
+        await db.meta.insert_one({"key": "wipe_demo_users_v1", "at": datetime.now(timezone.utc).isoformat()})
+        logging.info("Wiped %d demo users", deleted.deleted_count)
+
+# Allow owner login by username "Yusufm_1" as well as email
+@api_router.post("/auth/login_username")
+async def login_username(payload: dict):
+    username_or_email = (payload.get("identifier") or "").strip().lower()
+    password = payload.get("password") or ""
+    if not username_or_email or not password:
+        raise HTTPException(status_code=400, detail="identifier and password required")
+    user = await db.users.find_one({"$or": [
+        {"email": username_or_email},
+        {"username": {"$regex": f"^{username_or_email}$", "$options": "i"}},
+    ]})
+    if not user or not user.get("password_hash") or not verify_password(password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = make_jwt(user["user_id"])
+    return {
+        "token": token,
+        "user": {
+            "user_id": user["user_id"],
+            "name": user.get("name"),
+            "email": user["email"],
+            "picture": user.get("picture"),
+            "grade_level": user.get("grade_level", "uk_y10"),
+            "provider": user.get("provider", "email"),
+            "role": user.get("role", ROLE_INDIVIDUAL),
+            "school_id": user.get("school_id"),
         },
     }
 

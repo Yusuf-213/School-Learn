@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { GraduationCap, House, BookOpen, Timer, ChartLine, CreditCard, Question, SignIn, List, X, SignOut } from "@phosphor-icons/react";
+import { GraduationCap, House, BookOpen, Timer, ChartLine, CreditCard, Question, SignIn, List, X, SignOut, ChalkboardTeacher, Compass, Chat, Crown, Trophy } from "@phosphor-icons/react";
 import { useState } from "react";
 
 const PUBLIC_LINKS = [
@@ -10,10 +10,50 @@ const PUBLIC_LINKS = [
   { to: "/pricing", label: "Plans", icon: CreditCard, testid: "nav-plans" },
 ];
 
-const AUTH_LINKS = [
-  { to: "/focus", label: "Focus", icon: Timer, testid: "nav-focus" },
-  { to: "/progress", label: "Progress", icon: ChartLine, testid: "nav-progress" },
-];
+function navForUser(user) {
+  if (!user) return PUBLIC_LINKS;
+
+  const base = [
+    { to: "/dashboard", label: "Dashboard", icon: House, testid: "nav-home", end: true },
+    { to: "/subjects", label: "Classes", icon: BookOpen, testid: "nav-classes" },
+    { to: "/help", label: "Homework Help", icon: Question, testid: "nav-help" },
+    { to: "/dreams", label: "Dreams", icon: Compass, testid: "nav-dreams" },
+  ];
+
+  if (user.role === "owner") {
+    return [
+      { to: "/owner", label: "Owner HQ", icon: Crown, testid: "nav-owner" },
+      ...base,
+      { to: "/suggestions", label: "Suggestions", icon: Chat, testid: "nav-suggestions" },
+      { to: "/pricing", label: "Plans", icon: CreditCard, testid: "nav-plans" },
+    ];
+  }
+  if (user.role === "school_admin" || user.role === "teacher") {
+    return [
+      ...base,
+      { to: "/teacher", label: "Teach", icon: ChalkboardTeacher, testid: "nav-teacher" },
+      { to: "/focus", label: "Focus", icon: Timer, testid: "nav-focus" },
+      { to: "/suggestions", label: "Feedback", icon: Chat, testid: "nav-suggestions" },
+      { to: "/pricing", label: "Plans", icon: CreditCard, testid: "nav-plans" },
+    ];
+  }
+  if (user.role === "student") {
+    return [
+      ...base,
+      { to: "/my-record", label: "My record", icon: Trophy, testid: "nav-myrecord" },
+      { to: "/focus", label: "Focus", icon: Timer, testid: "nav-focus" },
+      { to: "/suggestions", label: "Suggestions", icon: Chat, testid: "nav-suggestions" },
+    ];
+  }
+  // individual
+  return [
+    ...base,
+    { to: "/focus", label: "Focus", icon: Timer, testid: "nav-focus" },
+    { to: "/progress", label: "Progress", icon: ChartLine, testid: "nav-progress" },
+    { to: "/suggestions", label: "Feedback", icon: Chat, testid: "nav-suggestions" },
+    { to: "/pricing", label: "Plans", icon: CreditCard, testid: "nav-plans" },
+  ];
+}
 
 export default function GlobalNav() {
   const { user, logout } = useAuth();
@@ -26,7 +66,7 @@ export default function GlobalNav() {
     navigate("/");
   };
 
-  const links = user ? [...PUBLIC_LINKS, ...AUTH_LINKS] : PUBLIC_LINKS;
+  const links = navForUser(user);
 
   return (
     <header className="sticky top-0 z-40 bg-paper/95 backdrop-blur border-b-2 border-ink">
@@ -35,37 +75,30 @@ export default function GlobalNav() {
           <div className="border-2 border-ink rounded-md bg-mint p-1.5 shadow-brutal">
             <GraduationCap size={20} weight="duotone" />
           </div>
-          <span className="font-display font-black text-xl tracking-tight">ScholarHub</span>
+          <span className="font-display font-black text-xl tracking-tight">Learnify</span>
         </Link>
 
-        {/* Desktop nav */}
-        <nav className="hidden md:flex items-center gap-1" data-testid="globalnav-desktop">
+        <nav className="hidden lg:flex items-center gap-1 flex-wrap" data-testid="globalnav-desktop">
           {links.map((l) => (
             <NavLink
               key={l.to} to={l.to} end={l.end}
               data-testid={l.testid}
               className={({ isActive }) =>
-                `inline-flex items-center gap-1.5 px-3 py-2 rounded-md border-2 text-sm font-bold transition-all duration-150 ${
-                  isActive
-                    ? "border-ink bg-butter shadow-brutal"
-                    : "border-transparent hover:border-ink hover:bg-mint"
+                `inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border-2 text-sm font-bold transition-all duration-150 whitespace-nowrap ${
+                  isActive ? "border-ink bg-butter shadow-brutal" : "border-transparent hover:border-ink hover:bg-mint"
                 }`
               }
             >
-              <l.icon size={16} weight="bold" />
+              <l.icon size={14} weight="bold" />
               <span>{l.label}</span>
             </NavLink>
           ))}
         </nav>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {user ? (
-            <div className="hidden md:flex items-center gap-2" data-testid="globalnav-user">
-              <Link
-                to="/dashboard"
-                data-testid="globalnav-user-link"
-                className="inline-flex items-center gap-2 border-2 border-ink rounded-md bg-white px-2 py-1.5 hover:bg-butter shadow-brutal transition-all"
-              >
+            <div className="hidden lg:flex items-center gap-2">
+              <span className="inline-flex items-center gap-2 border-2 border-ink rounded-md bg-white px-2 py-1.5 shadow-brutal">
                 {user.picture ? (
                   <img src={user.picture} alt="" className="w-6 h-6 rounded-full border border-ink" />
                 ) : (
@@ -74,12 +107,9 @@ export default function GlobalNav() {
                   </span>
                 )}
                 <span className="text-sm font-bold">{user.name?.split(" ")[0] || "Me"}</span>
-              </Link>
-              <button
-                onClick={handleLogout}
-                data-testid="globalnav-logout"
-                className="brutal-btn bg-white hover:bg-peach text-sm inline-flex items-center gap-1.5 py-2 px-3"
-              >
+              </span>
+              <button onClick={handleLogout} data-testid="globalnav-logout"
+                className="brutal-btn bg-white hover:bg-peach text-sm inline-flex items-center gap-1.5 py-1.5 px-2.5">
                 <SignOut size={14} weight="bold" /> Sign out
               </button>
             </div>
@@ -94,42 +124,27 @@ export default function GlobalNav() {
             </div>
           )}
 
-          {/* Mobile burger */}
-          <button
-            data-testid="globalnav-mobile-toggle"
-            onClick={() => setOpen(!open)}
-            className="md:hidden border-2 border-ink rounded-md p-2 bg-butter shadow-brutal"
-            aria-label="Menu"
-          >
+          <button data-testid="globalnav-mobile-toggle" onClick={() => setOpen(!open)}
+            className="lg:hidden border-2 border-ink rounded-md p-2 bg-butter shadow-brutal" aria-label="Menu">
             {open ? <X size={18} /> : <List size={18} />}
           </button>
         </div>
       </div>
 
-      {/* Mobile menu */}
       {open && (
-        <div className="md:hidden border-t-2 border-ink bg-white" data-testid="globalnav-mobile-menu">
+        <div className="lg:hidden border-t-2 border-ink bg-white" data-testid="globalnav-mobile-menu">
           <div className="max-w-7xl mx-auto px-4 py-3 grid grid-cols-2 gap-2">
             {links.map((l) => (
-              <NavLink
-                key={l.to} to={l.to} end={l.end}
-                onClick={() => setOpen(false)}
-                data-testid={`${l.testid}-m`}
+              <NavLink key={l.to} to={l.to} end={l.end} onClick={() => setOpen(false)} data-testid={`${l.testid}-m`}
                 className={({ isActive }) =>
-                  `flex items-center gap-2 px-3 py-2 rounded-md border-2 font-bold text-sm ${
-                    isActive ? "border-ink bg-butter shadow-brutal" : "border-ink/30 bg-white"
-                  }`
-                }
-              >
+                  `flex items-center gap-2 px-3 py-2 rounded-md border-2 font-bold text-sm ${isActive ? "border-ink bg-butter shadow-brutal" : "border-ink/30 bg-white"}`
+                }>
                 <l.icon size={16} weight="bold" /> {l.label}
               </NavLink>
             ))}
             {user ? (
-              <button
-                onClick={handleLogout}
-                data-testid="globalnav-logout-m"
-                className="flex items-center gap-2 px-3 py-2 rounded-md border-2 border-ink bg-peach font-bold text-sm col-span-2"
-              >
+              <button onClick={handleLogout} data-testid="globalnav-logout-m"
+                className="flex items-center gap-2 px-3 py-2 rounded-md border-2 border-ink bg-peach font-bold text-sm col-span-2">
                 <SignOut size={16} weight="bold" /> Sign out
               </button>
             ) : (
