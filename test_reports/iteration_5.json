@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 8 verified end-to-end. 14/14 new pytest tests pass covering HWA26 lifetime promo, lessons (AI), homework + AI marking + class analysis, detentions, attendance, achievements, and owner payouts. Frontend signup with HWA26 → /dashboard works; GET /api/billing/me returns tier=school_small + expires_at=null. No backend bugs found. One minor UI copy bug: success toast still says 'free for 365 days' for the HWA26 lifetime promo (cosmetic; backend correctly sets expires=null + lifetime=true).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "SchoolSignup.jsx (line ~79)",
+        "issue": "Success toast hardcoded: 'Promo HWA26 applied — free for 365 days. Skipping payment.' — but HWA26 is LIFETIME (no expiry). The user explicitly requested 'never have to pay'. Toast should say 'free forever' or read the lifetime flag from data.school.subscription_lifetime.",
+        "selector": "toast.success after /auth/signup_school response",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8_lifetime.py",
+    "/app/test_reports/pytest/iter8_lifetime.xml"
+  ],
+  "action_items": [
+    "(Optional/cosmetic) Update SchoolSignup.jsx success toast to read 'free forever' when data.school.subscription_lifetime === true, otherwise '365 days'.",
+    "(Carry-over from iter 4/7, still open) CheckoutCreateRequest.plan_id Literal in server.py does NOT include school_small|school_medium|school_large — paid school checkout from /pricing will return 422. Not exercised by HWA26 flow (which bypasses checkout) but blocks paying schools."
+  ],
+  "critical_code_review_comments": [
+    "get_user_plan correctly short-circuits the expiry check when subscription_lifetime=true (server.py:638). Verified end-to-end: signup → DB has lifetime=true, expires=null → /api/billing/me returns school_small (not downgraded to free).",
+    "PROMO_CODES dict only contains HWA26. tier defaults to req.plan_id, so promo is portable to any school size — good.",
+    "Backend password policy requires 10+ chars upper/lower/digit/symbol, but SchoolSignup.jsx step-3 client validation only requires 6 chars. Users with a 6–9 char password will get a 400 from backend after pressing submit. Suggest tightening the client check (informational only — backend correctly enforces).",
+    "Frontend toast text says '365 days' regardless of lifetime flag — inconsistent with the lifetime semantics user requested."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (14/14 new tests pass; prior 18 from iter5 still present)",
+    "frontend": "100% on the HWA26 signup → dashboard → billing/me flow"
+  },
+  "test_credentials": "Owner: identifier='Yusufm_1', password='The_Underdog'. Schools created via /auth/signup_school using unique *.example.com domains with contact_password 'Headmaster1!' (meets 10-char upper/lower/digit/symbol policy). Students created via /auth/register then promoted in MongoDB to role='student'+school_id for student-flow endpoints.",
+  "seed_data_creation": "Per-run: 2 TEST schools (1 with HWA26 lifetime, 1 with bogus promo that 400s), 1 admin user, 1 student user, 1 lesson (AI), 1 homework, 1 submission, 1 detention, 1 attendance row, 2 achievements. All prefixed TEST_ where applicable.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: pytest /app/backend/tests/test_iteration8_lifetime.py — 14 tests, ~63s (Claude calls dominate). MongoDB direct connection used to promote registered individuals to role='student' (the public API has no student creation endpoint). EmailStr rejects .test TLD — always use *.example.com. The HWA26 lifetime promo writes subscription_lifetime=true and subscription_expires_at=null on both the school and the admin user (server.py:1297–1349). get_user_plan respects lifetime=true at server.py:638. Owner /api/owner/payouts.promo_schools surfaces every promo-applied school.",
+  "rca of the issue": "No new bug. Iter 8 was a verification iteration on top of E1's lifetime-promo fix. Verified: (1) PROMO_CODES={'HWA26': {tier: chosen, lifetime: True}} correctly sets sub_expires=None when lifetime is True; (2) admin_user inherits subscription_lifetime; (3) get_user_plan's `if tier != 'free' and not lifetime and expires` guard correctly leaves the tier untouched when lifetime=True even with expires=None, preventing the false downgrade-to-free that would otherwise occur."
+}

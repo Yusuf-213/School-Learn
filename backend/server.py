@@ -634,7 +634,8 @@ def extract_json(text: str) -> dict:
 async def get_user_plan(user: dict) -> dict:
     tier = user.get("subscription_tier", "free")
     expires = user.get("subscription_expires_at")
-    if tier != "free" and expires:
+    lifetime = user.get("subscription_lifetime", False)
+    if tier != "free" and not lifetime and expires:
         try:
             exp = datetime.fromisoformat(expires) if isinstance(expires, str) else expires
             if exp.tzinfo is None:
@@ -1292,17 +1293,20 @@ async def signup_school(req: SchoolSignupRequest):
     school_id = f"school_{uuid.uuid4().hex[:10]}"
 
     # Promo code activation — bypasses Stripe Checkout for partner/free schools.
-    PROMO_CODES = {"HWA26": {"tier": req.plan_id or "school_small", "days": 365, "label": "HWA26"}}
+    # HWA26 = lifetime free, never expires.
+    PROMO_CODES = {"HWA26": {"tier": req.plan_id or "school_small", "lifetime": True, "label": "HWA26"}}
     promo_code = (req.promo_code or "").strip().upper()
     promo_applied = None
     sub_tier = "free"
     sub_expires = None
+    promo_lifetime = False
     if promo_code:
         promo = PROMO_CODES.get(promo_code)
         if not promo:
             raise HTTPException(status_code=400, detail="Invalid promo code")
         sub_tier = promo["tier"]
-        sub_expires = (datetime.now(timezone.utc) + timedelta(days=promo["days"])).isoformat()
+        promo_lifetime = bool(promo.get("lifetime"))
+        sub_expires = None if promo_lifetime else (datetime.now(timezone.utc) + timedelta(days=promo.get("days", 365))).isoformat()
         promo_applied = promo["label"]
 
     school_doc = {
@@ -1316,6 +1320,7 @@ async def signup_school(req: SchoolSignupRequest):
         "plan_id": req.plan_id,
         "subscription_tier": sub_tier,
         "subscription_expires_at": sub_expires,
+        "subscription_lifetime": promo_lifetime,
         "promo_code_applied": promo_applied,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1334,6 +1339,10 @@ async def signup_school(req: SchoolSignupRequest):
         "provider": "email",
         "role": ROLE_SCHOOL_ADMIN,
         "school_id": school_id,
+        # Inherit the school's plan tier so AI gating works for the admin too.
+        "subscription_tier": sub_tier,
+        "subscription_expires_at": sub_expires,
+        "subscription_lifetime": promo_lifetime,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(admin_user)
