@@ -29,6 +29,7 @@ export default function SchoolSignup() {
     class_names_raw: "",
     slt_emails_raw: "",
     plan_id: "school_small",
+    promo_code: "",
   });
 
   const next = (e) => {
@@ -69,12 +70,18 @@ export default function SchoolSignup() {
         class_names: form.class_names_raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean),
         slt_emails: form.slt_emails_raw.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean),
         plan_id: form.plan_id,
+        promo_code: form.promo_code ? form.promo_code.trim().toUpperCase() : null,
       };
       const { data } = await api.post("/auth/signup_school", payload);
       localStorage.setItem("token", data.token);
       setUser(data.user);
-      toast.success("School registered! Set up your subscription next.");
-      navigate("/pricing");
+      if (data.school?.promo_code_applied) {
+        toast.success(`Promo ${data.school.promo_code_applied} applied — free for 365 days. Skipping payment.`);
+        navigate("/dashboard");
+      } else {
+        toast.success("School registered! Set up your subscription next.");
+        navigate("/pricing");
+      }
     } catch (ex) {
       setErr(ex.response?.data?.detail || "Registration failed");
     } finally {
@@ -217,6 +224,15 @@ export default function SchoolSignup() {
                   </label>
                 ))}
               </div>
+
+              <label className="block pt-2 border-t-2 border-ink mt-3">
+                <span className="text-xs uppercase tracking-[0.2em] font-bold">Have a promo code? (optional)</span>
+                <input data-testid="school-promo-input" value={form.promo_code}
+                  onChange={(e) => setForm({ ...form, promo_code: e.target.value.toUpperCase() })}
+                  className="mt-2 brutal-input w-full font-mono tracking-widest uppercase"
+                  placeholder="e.g. HWA26" />
+                <span className="text-xs text-[#4A4A4A] mt-1 inline-block">Valid codes activate your plan for free — no card needed.</span>
+              </label>
 
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={() => setStep(3)} className="brutal-btn bg-white inline-flex items-center gap-2"><ArrowLeft size={16} /> Back</button>

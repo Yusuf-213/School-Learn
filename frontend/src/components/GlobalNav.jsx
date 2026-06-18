@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { GraduationCap, House, BookOpen, Timer, ChartLine, CreditCard, Question, SignIn, List, X, SignOut, ChalkboardTeacher, Compass, Chat, Crown, Trophy, ShieldCheck } from "@phosphor-icons/react";
+import { GraduationCap, House, BookOpen, Timer, ChartLine, CreditCard, Question, SignIn, List, X, SignOut, ChalkboardTeacher, Compass, Chat, Crown, Trophy, ShieldCheck, Bank } from "@phosphor-icons/react";
 import { useState } from "react";
 import AccessibilityMenu from "@/components/AccessibilityMenu";
 
@@ -24,6 +24,7 @@ function navForUser(user) {
   if (user.role === "owner") {
     return [
       { to: "/owner", label: "Owner HQ", icon: Crown, testid: "nav-owner" },
+      { to: "/owner/payouts", label: "Payouts", icon: Bank, testid: "nav-payouts" },
       ...base,
       { to: "/suggestions", label: "Suggestions", icon: Chat, testid: "nav-suggestions" },
       { to: "/pricing", label: "Plans", icon: CreditCard, testid: "nav-plans" },

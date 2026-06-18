@@ -28,6 +28,7 @@ import Suggestions from "@/pages/Suggestions";
 import Safety from "@/pages/Safety";
 import Contact from "@/pages/Contact";
 import MfaSetup from "@/pages/MfaSetup";
+import Payouts from "@/pages/Payouts";
 
 function AppRouter() {
   const location = useLocation();
@@ -57,6 +58,7 @@ function AppRouter() {
       <Route path="/safety" element={<Safety />} />
       <Route path="/contact" element={<Contact />} />
       <Route path="/mfa" element={<ProtectedRoute><MfaSetup /></ProtectedRoute>} />
+      <Route path="/owner/payouts" element={<ProtectedRoute><Payouts /></ProtectedRoute>} />
       <Route path="*" element={<Landing />} />
     </Routes>
   );

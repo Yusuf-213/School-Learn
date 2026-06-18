@@ -1140,6 +1140,54 @@ async def microsoft_auth(req: MicrosoftAuthRequest):
         },
     }
 
+# ====================== Owner payouts (Stripe Connect / bank-on-file) ======================
+
+class PayoutSettingsUpdate(BaseModel):
+    bank_account_holder_name: Optional[str] = None
+    bank_account_iban: Optional[str] = None      # for SEPA / UK
+    bank_sort_code: Optional[str] = None
+    bank_account_number_last4: Optional[str] = None
+    stripe_account_id: Optional[str] = None      # acct_xxx if owner connects via Stripe Connect
+    payout_currency: Optional[str] = "gbp"
+    notes: Optional[str] = None
+
+@api_router.get("/owner/payouts")
+async def owner_payouts(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    settings = await db.owner_settings.find_one({"key": "payouts"}, {"_id": 0}) or {}
+    # Live revenue from completed payments
+    txs = await db.payment_transactions.find({"payment_status": "paid"}, {"_id": 0}).to_list(2000)
+    total_pence = sum(int(t.get("amount_total") or (float(t.get("amount") or 0) * 100)) for t in txs)
+    by_plan = {}
+    for t in txs:
+        by_plan[t.get("plan_id", "unknown")] = by_plan.get(t.get("plan_id", "unknown"), 0) + 1
+    # Promo-applied schools (free, no payment)
+    promo_schools = await db.schools.find({"promo_code_applied": {"$ne": None}}, {"_id": 0, "name": 1, "promo_code_applied": 1, "subscription_tier": 1, "created_at": 1}).to_list(500)
+    return {
+        "settings": settings.get("data", {}),
+        "revenue": {
+            "total_gbp": total_pence / 100.0,
+            "transaction_count": len(txs),
+            "by_plan": by_plan,
+        },
+        "promo_schools": promo_schools,
+        "recent_payments": txs[-20:][::-1],
+        "stripe_dashboard_url": "https://dashboard.stripe.com/settings/payouts",
+    }
+
+@api_router.put("/owner/payouts")
+async def owner_payouts_update(payload: PayoutSettingsUpdate, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    data = {k: v for k, v in payload.dict().items() if v is not None}
+    await db.owner_settings.update_one(
+        {"key": "payouts"},
+        {"$set": {"key": "payouts", "data": data, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"ok": True, "settings": data}
+
 # ====================== Schools, Lessons, Homework, Detentions, etc. ======================
 
 class SchoolSignupRequest(BaseModel):
@@ -1153,6 +1201,7 @@ class SchoolSignupRequest(BaseModel):
     class_names: List[str]  # e.g. ["8x1","9y6"]
     slt_emails: List[str] = []
     plan_id: Optional[str] = None  # which school plan they intend to buy
+    promo_code: Optional[str] = None  # 'HWA26' = full-year free activation
 
 class ClassCreate(BaseModel):
     name: str
@@ -1241,6 +1290,21 @@ async def signup_school(req: SchoolSignupRequest):
         raise HTTPException(status_code=400, detail=pw_err)
 
     school_id = f"school_{uuid.uuid4().hex[:10]}"
+
+    # Promo code activation — bypasses Stripe Checkout for partner/free schools.
+    PROMO_CODES = {"HWA26": {"tier": req.plan_id or "school_small", "days": 365, "label": "HWA26"}}
+    promo_code = (req.promo_code or "").strip().upper()
+    promo_applied = None
+    sub_tier = "free"
+    sub_expires = None
+    if promo_code:
+        promo = PROMO_CODES.get(promo_code)
+        if not promo:
+            raise HTTPException(status_code=400, detail="Invalid promo code")
+        sub_tier = promo["tier"]
+        sub_expires = (datetime.now(timezone.utc) + timedelta(days=promo["days"])).isoformat()
+        promo_applied = promo["label"]
+
     school_doc = {
         "school_id": school_id,
         "name": req.school_name,
@@ -1250,8 +1314,9 @@ async def signup_school(req: SchoolSignupRequest):
         "class_names": [c.strip() for c in req.class_names if c.strip()],
         "slt_emails": [e.lower().strip() for e in req.slt_emails if e.strip()],
         "plan_id": req.plan_id,
-        "subscription_tier": "free",
-        "subscription_expires_at": None,
+        "subscription_tier": sub_tier,
+        "subscription_expires_at": sub_expires,
+        "promo_code_applied": promo_applied,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.schools.insert_one(school_doc)
