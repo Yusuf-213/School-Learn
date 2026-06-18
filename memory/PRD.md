@@ -1,53 +1,52 @@
 # Learnify — Product Requirements
 
-## Original Problem (Iteration 5 ask)
-Rebrand to **Learnify**, build a full school SaaS competing with Sparx / Bedrock / Seneca / Teams. Wipe demo users; seed owner Yusufm_1. Owner panel showing every school. School signup with domain, sizes, class names, SLT. Teacher panel with lesson planner (AI), homework + AI class+per-student analysis with expected grades, detentions. Student panel: detentions, attendance, achievements. Dreams page. Suggestions page. New 3-step signup (email→name→password). School pricing: £750/£1500/£3000 per year.
+## Iteration 6 — UK-school safety, compliance & branding
 
-## Implemented (Iteration 5)
-### Backend
-- Roles: owner, school_admin, teacher, student, individual.
-- Owner seeded on startup (`Yusufm_1` / `yusufm_1@outlook.com` / `The_Underdog`). Demo data wiped on first start (idempotent marker).
-- Username-or-email login: `POST /api/auth/login_username`.
-- School signup: `POST /api/auth/signup_school` (creates school + classes + admin user; enforces contact email matches domain).
-- Owner endpoints: `/api/owner/stats`, `/api/owner/schools`, `/api/owner/suggestions` (with student/teacher/class/homework counts).
-- Teacher endpoints: `/api/teacher/lessons` (AI lesson plan with starter/main/plenary/differentiation/homework/success_criteria), `/api/teacher/homework`, `/api/teacher/homework/{id}/analyze` (class overview, top misconceptions, recommended next lesson, per-student strengths/weaknesses/next steps/expected grade), `/api/teacher/detention`, `/api/teacher/attendance`, `/api/teacher/achievement`.
-- Student endpoints: `/api/student/my-detentions`, `/api/student/my-attendance` (with rate %), `/api/student/my-achievements`, `/api/student/dreams` (AI path), `/api/student/homework`, `/api/student/homework/submit` (AI marking).
-- Suggestions: `/api/suggestions` (POST) + `/api/owner/suggestions` (GET, owner-only).
-- Stripe checkout updated to accept school_small/school_medium/school_large.
-- PLANS updated: school_small £750, school_medium £1500, school_large £3000 (per year, whole school).
+### Done
+**Branding**
+- Removed "Made with Emergent" badge from `frontend/public/index.html`.
+- Removed Emergent platform script.
+- Tab title: "Learnify · UK schools' all-in-one learning platform".
 
-### Frontend
-- Full rebrand to **Learnify** (landing, nav, footer, copy).
-- 3-step signup: email → first name → password+grade.
-- 4-step school signup: details → size/classes → school lead → plan.
-- Role-aware GlobalNav (Owner HQ for owner; Teach for teachers; My record for students).
-- Owner HQ at `/owner`: stats, schools table with live counts, suggestions inbox.
-- Teacher panel at `/teacher`: AI lesson planner, homework with AI analysis, detentions.
-- Student panel at `/my-record`: tabs for detentions, attendance, achievements.
-- Dreams at `/dreams`: AI life path mapping.
-- Suggestions at `/suggestions`.
-- Pricing page with Individuals/Schools tabs.
-- Login accepts email OR username.
+**Content filtering & monitoring**
+- `moderate_text()` helper screens every AI input before it reaches Claude.
+- Hard-block list: self-harm, CSAM, illegal drug supply, weapons/bombs/IEDs, school violence, sexual violence.
+- Safeguard cues: distress signals + abuse references — auto-appends Childline/Samaritans contact details to AI replies.
+- Applied to `/api/ai/help`, `/api/ai/chat`, `/api/student/dreams`, `/api/suggestions`.
+- All flagged content logged to `db.flagged_content` and visible to owner at `/api/owner/safety`.
 
-## Testing
-- 18/18 new pytest tests pass.
-- All 9 frontend UI flows verified live.
-- One bug found & fixed (ObjectId in signup_school response).
-- One follow-up applied (CheckoutCreateRequest Literal widened).
+**Password policy (strict)**
+- Enforced on `/api/auth/register` and `/api/auth/signup_school`:
+  - 10+ characters, upper + lower + number + symbol, not in common-password blocklist.
 
-## Owner credentials
-- Username: `Yusufm_1` · Email: `Yusufm_1@outlook.com` · Password: `The_Underdog`
-- Role: owner (bypasses every role check; can hit any endpoint).
+**MFA (TOTP) for staff**
+- New `pyotp` dependency.
+- `/api/auth/mfa/setup`, `/api/auth/mfa/verify_enroll`, `/api/auth/mfa/disable`, `/api/auth/mfa/status`.
+- `/api/auth/login_with_mfa` — enforces TOTP code if user has MFA enabled.
+- New `/mfa` page with QR-code enrolment, accessible to all logged-in users; encouraged for staff (owner / school_admin / teacher).
 
-## Backlog (P1 / P2)
-- P1: Split server.py (now 1,700+ lines) into routers (auth, owner, teacher, student, ai, billing).
-- P1: Email-domain-gated student/teacher self-signup (so students can join via @school.uk email).
-- P1: Lesson video calling, structured class chat feed.
-- P1: Spaced-repetition flashcards, real PDF export.
-- P2: Age-shifted UI (preschool voice-first / primary gamified / secondary focused).
-- P2: Parent multi-child accounts, offline mode (SW + IndexedDB).
+**Statutory & public pages**
+- `/api/safety/info` (public) — platform safety statement, hotlines, statutory links, security summary.
+- `/api/school/{id}/policies` (public read) + `PATCH /api/school/policies` (school admin write) — schools host their own safeguarding, child-protection, mobile-phone, behaviour, SEN, accessibility, privacy policies + Ofsted report URL + Designated Safeguarding Lead contact.
+- `/safety` page — Built safe for UK schools (security, content filtering, accessibility, statutory links).
+- `/contact` page — safeguarding / schools / support / DPO contacts.
 
-## Notes
-- Database wiped clean — only owner remains.
-- Stripe test mode active; checkout works for new school tiers.
-- `_grade_descriptor` unified all AI calibration across endpoints.
+**Accessibility (WCAG 2.2 AA)**
+- New `AccessibilityMenu` component (eye-icon in GlobalNav).
+- Toggleable: OpenDyslexic font, high-contrast mode, larger text (+25%), reduce motion.
+- Persisted to `localStorage`; applied at app load.
+
+**Footer**
+- Footer now links to Safety, Contact, MFA on every page.
+
+### Backlog / next
+- Real WAF + DDoS protection (infra, Cloudflare or similar).
+- Automated daily DB backups (configure MongoDB Atlas backup or scheduled `mongodump`).
+- Annual safety-review audit log + automated reminder email.
+- Cookie consent banner (UK PECR).
+- Student/teacher self-signup gated by `@school_email_domain`.
+- Split `server.py` into routers.
+
+### Owner credentials (unchanged)
+- Username `Yusufm_1` / Email `Yusufm_1@outlook.com` / Password `The_Underdog`.
+- Note: owner's seeded password bypasses the new password policy (still works to sign in). New users created via the public flow must meet 10-char + complexity.

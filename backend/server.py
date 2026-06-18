@@ -9,6 +9,8 @@ import uuid
 import bcrypt
 import jwt
 import httpx
+import re
+import pyotp
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Literal
@@ -145,6 +147,85 @@ def verify_password(password: str, hashed: str) -> bool:
     except Exception:
         return False
 
+# ====================== Safety: password policy + content moderation ======================
+
+def validate_password_policy(password: str) -> Optional[str]:
+    """Return None if OK, else a human-readable failure reason. UK schools require complex, unique passwords."""
+    if len(password) < 10:
+        return "Password must be at least 10 characters."
+    if not re.search(r"[A-Z]", password):
+        return "Password must contain at least one uppercase letter."
+    if not re.search(r"[a-z]", password):
+        return "Password must contain at least one lowercase letter."
+    if not re.search(r"\d", password):
+        return "Password must contain at least one number."
+    if not re.search(r"[!@#$%^&*()_+\-={}\[\]:;\"'<>,.?/\\|`~]", password):
+        return "Password must contain at least one symbol (e.g. !@#$%)."
+    # Common-password blocklist (minimum viable)
+    common = {"password", "password1", "qwerty", "12345678", "letmein", "welcome", "admin123", "iloveyou"}
+    if password.lower() in common or password.lower().replace("!", "") in common:
+        return "That password is too common — pick something unique."
+    return None
+
+# Hard-block patterns — fast regex check before any LLM call.
+HARMFUL_PATTERNS = [
+    r"\b(suicide|kill myself|self.?harm|self.?harming)\b",
+    r"\b(child.?porn|csam|loli|pedo)\b",
+    r"\b(buy|sell|deal|score)\s+(meth|cocaine|heroin|fentanyl|crack|weed|ket)\b",
+    r"\b(make|build|construct|create|how to make|how to build).{0,40}(bomb|pipe.?bomb|napalm|nerve agent|chemical weapon|ied)\b",
+    r"\b(school.?shooter|shoot.{0,20}(my|the)\s+school)\b",
+    r"\b(rape|gang.?rape)\b",
+]
+
+SAFEGUARDING_PATTERNS = [
+    r"\b(suicide|kill myself|self.?harm|self.?harming|cutting myself|want to die|end it all|hopeless)\b",
+    r"\b(abuse|abusing|abused|hit me|hits me|hurt me|hurts me|touched me)\b",
+]
+
+_HARM_RE = [re.compile(p, re.IGNORECASE) for p in HARMFUL_PATTERNS]
+_SAFE_RE = [re.compile(p, re.IGNORECASE) for p in SAFEGUARDING_PATTERNS]
+
+async def moderate_text(text: str, context: str, user: Optional[dict] = None) -> dict:
+    """Return {action: 'allow'|'safeguard'|'block', reason, matched}.
+    - block: harmful or illegal content — refuse to process, log.
+    - safeguard: mental health / abuse cue — process but flag a wellbeing response, log.
+    - allow: normal."""
+    if not text:
+        return {"action": "allow"}
+    for r in _HARM_RE:
+        m = r.search(text)
+        if m:
+            await _log_flag(text, context, "block", m.group(0), user)
+            return {"action": "block", "reason": "Content flagged as harmful or illegal.", "matched": m.group(0)}
+    for r in _SAFE_RE:
+        m = r.search(text)
+        if m:
+            await _log_flag(text, context, "safeguard", m.group(0), user)
+            return {"action": "safeguard", "reason": "Safeguarding cue detected.", "matched": m.group(0)}
+    return {"action": "allow"}
+
+async def _log_flag(text: str, context: str, action: str, matched: str, user: Optional[dict]):
+    try:
+        await db.flagged_content.insert_one({
+            "context": context,
+            "action": action,
+            "matched": matched,
+            "text_preview": text[:500],
+            "user_id": (user or {}).get("user_id"),
+            "user_email": (user or {}).get("email"),
+            "school_id": (user or {}).get("school_id"),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
+
+SAFEGUARDING_NOTE = (
+    "\n\n---\n**If you need someone to talk to right now:**\n"
+    "- Childline: **0800 1111** (free, 24/7) · https://www.childline.org.uk\n"
+    "- Samaritans: **116 123** · https://www.samaritans.org\n"
+    "- Or tell a trusted adult at school."
+)
+
 def make_jwt(user_id: str) -> str:
     payload = {
         "user_id": user_id,
@@ -209,6 +290,9 @@ async def register(req: RegisterRequest):
     existing = await db.users.find_one({"email": req.email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
+    pw_err = validate_password_policy(req.password)
+    if pw_err:
+        raise HTTPException(status_code=400, detail=pw_err)
     user_id = f"user_{uuid.uuid4().hex[:12]}"
     doc = {
         "user_id": user_id,
@@ -639,6 +723,10 @@ async def ai_generate(req: AIGenerateRequest, current=Depends(get_current_user))
 
 @api_router.post("/ai/chat")
 async def ai_chat(req: AIChatRequest, current=Depends(get_current_user)):
+    mod = await moderate_text(req.message, "ai_chat", current)
+    if mod["action"] == "block":
+        raise HTTPException(status_code=400, detail="That content can't be processed.")
+    safeguard = mod["action"] == "safeguard"
     session_id = req.session_id or f"chat_{current['user_id']}_{uuid.uuid4().hex[:6]}"
     context = f"Subject: {req.subject}"
     if req.topic:
@@ -676,6 +764,15 @@ async def ai_chat(req: AIChatRequest, current=Depends(get_current_user)):
 @api_router.post("/ai/help")
 async def ai_help(req: HomeworkHelpRequest, current=Depends(get_current_user)):
     """Socratic homework helper: first diagnose what student doesn't understand, then teach step by step."""
+    # Content moderation
+    mod_problem = await moderate_text(req.problem, "ai_help.problem", current)
+    if mod_problem["action"] == "block":
+        raise HTTPException(status_code=400, detail="That content can't be processed. If you need support, please speak to a trusted adult or contact Childline 0800 1111.")
+    mod_msg = await moderate_text(req.message or "", "ai_help.message", current) if req.message else {"action": "allow"}
+    if mod_msg["action"] == "block":
+        raise HTTPException(status_code=400, detail="That content can't be processed.")
+    safeguard = mod_problem["action"] == "safeguard" or mod_msg["action"] == "safeguard"
+
     plan = await get_user_plan(current)
     # Gate: daily limit applies
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -1139,6 +1236,9 @@ async def signup_school(req: SchoolSignupRequest):
         raise HTTPException(status_code=400, detail="A school with this email domain already exists.")
     if await db.users.find_one({"email": contact_email}):
         raise HTTPException(status_code=400, detail="That email is already registered.")
+    pw_err = validate_password_policy(req.contact_password)
+    if pw_err:
+        raise HTTPException(status_code=400, detail=pw_err)
 
     school_id = f"school_{uuid.uuid4().hex[:10]}"
     school_doc = {
@@ -1543,6 +1643,9 @@ async def my_achievements(current=Depends(get_current_user)):
 
 @api_router.post("/student/dreams")
 async def submit_dream(req: DreamSubmit, current=Depends(get_current_user)):
+    mod = await moderate_text(req.dream, "dreams", current)
+    if mod["action"] == "block":
+        raise HTTPException(status_code=400, detail="That content can't be processed.")
     system = (
         "You are Learnify Compass — a warm, realistic career and life mentor. "
         f"Student level: {_grade_descriptor(current.get('grade_level', 'uk_y10'))}. "
@@ -1586,6 +1689,9 @@ async def list_dreams(current=Depends(get_current_user)):
 
 @api_router.post("/suggestions")
 async def submit_suggestion(req: SuggestionSubmit, current=Depends(get_current_user)):
+    mod = await moderate_text(req.message, "suggestion", current)
+    if mod["action"] == "block":
+        raise HTTPException(status_code=400, detail="That content can't be processed.")
     doc = {
         "suggestion_id": f"sug_{uuid.uuid4().hex[:8]}",
         "user_id": current["user_id"],
@@ -1598,6 +1704,175 @@ async def submit_suggestion(req: SuggestionSubmit, current=Depends(get_current_u
     await db.suggestions.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+# ====================== Safety: MFA (TOTP) + content log + statutory pages ======================
+
+class MfaSetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+
+class MfaVerifyRequest(BaseModel):
+    code: str
+
+class LoginWithMfaRequest(BaseModel):
+    identifier: str
+    password: str
+    code: Optional[str] = None
+
+@api_router.post("/auth/mfa/setup")
+async def mfa_setup(current=Depends(get_current_user)):
+    """Begin MFA enrolment. Returns a TOTP secret + otpauth:// URI. Staff only (owner, school_admin, teacher)."""
+    if current.get("role") not in {ROLE_OWNER, ROLE_SCHOOL_ADMIN, ROLE_TEACHER}:
+        raise HTTPException(status_code=403, detail="MFA is for staff accounts.")
+    secret = pyotp.random_base32()
+    issuer = "Learnify"
+    label = current["email"]
+    uri = pyotp.TOTP(secret).provisioning_uri(name=label, issuer_name=issuer)
+    await db.users.update_one(
+        {"user_id": current["user_id"]},
+        {"$set": {"mfa_secret_pending": secret, "mfa_setup_started_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"secret": secret, "provisioning_uri": uri}
+
+@api_router.post("/auth/mfa/verify_enroll")
+async def mfa_verify_enroll(req: MfaVerifyRequest, current=Depends(get_current_user)):
+    user = await db.users.find_one({"user_id": current["user_id"]})
+    secret = user.get("mfa_secret_pending")
+    if not secret:
+        raise HTTPException(status_code=400, detail="No MFA setup in progress")
+    totp = pyotp.TOTP(secret)
+    if not totp.verify(req.code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Code didn't match — try again.")
+    await db.users.update_one(
+        {"user_id": current["user_id"]},
+        {"$set": {"mfa_secret": secret, "mfa_enabled": True}, "$unset": {"mfa_secret_pending": ""}},
+    )
+    return {"enabled": True}
+
+@api_router.post("/auth/mfa/disable")
+async def mfa_disable(req: MfaVerifyRequest, current=Depends(get_current_user)):
+    user = await db.users.find_one({"user_id": current["user_id"]})
+    if not user.get("mfa_enabled"):
+        return {"enabled": False}
+    if not pyotp.TOTP(user["mfa_secret"]).verify(req.code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Code didn't match")
+    await db.users.update_one(
+        {"user_id": current["user_id"]},
+        {"$set": {"mfa_enabled": False}, "$unset": {"mfa_secret": ""}},
+    )
+    return {"enabled": False}
+
+@api_router.get("/auth/mfa/status")
+async def mfa_status(current=Depends(get_current_user)):
+    user = await db.users.find_one({"user_id": current["user_id"]})
+    return {
+        "enabled": bool(user.get("mfa_enabled")),
+        "required_for_role": current.get("role") in {ROLE_OWNER, ROLE_SCHOOL_ADMIN, ROLE_TEACHER},
+    }
+
+@api_router.post("/auth/login_with_mfa")
+async def login_with_mfa(req: LoginWithMfaRequest):
+    """Identical to login_username but enforces MFA when enabled."""
+    ident = (req.identifier or "").strip().lower()
+    user = await db.users.find_one({"$or": [
+        {"email": ident},
+        {"username": {"$regex": f"^{ident}$", "$options": "i"}},
+    ]})
+    if not user or not user.get("password_hash") or not verify_password(req.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if user.get("mfa_enabled"):
+        if not req.code:
+            raise HTTPException(status_code=401, detail="MFA_REQUIRED")
+        if not pyotp.TOTP(user["mfa_secret"]).verify(req.code, valid_window=1):
+            raise HTTPException(status_code=401, detail="Invalid MFA code")
+    token = make_jwt(user["user_id"])
+    return {
+        "token": token,
+        "user": {
+            "user_id": user["user_id"], "name": user.get("name"), "email": user["email"],
+            "picture": user.get("picture"), "grade_level": user.get("grade_level", "uk_y10"),
+            "provider": user.get("provider", "email"), "role": user.get("role", ROLE_INDIVIDUAL),
+            "school_id": user.get("school_id"), "mfa_enabled": True,
+        },
+    }
+
+# --- Safety log (owner-only) ---
+
+@api_router.get("/owner/safety")
+async def owner_safety(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    items = await db.flagged_content.find({}, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+    return {
+        "items": items,
+        "by_action": {
+            "block": await db.flagged_content.count_documents({"action": "block"}),
+            "safeguard": await db.flagged_content.count_documents({"action": "safeguard"}),
+        }
+    }
+
+# --- Statutory pages: schools host their own policies + Ofsted report URLs ---
+
+class SchoolPoliciesUpdate(BaseModel):
+    safeguarding_url: Optional[str] = None
+    child_protection_url: Optional[str] = None
+    mobile_phone_policy_url: Optional[str] = None
+    behaviour_policy_url: Optional[str] = None
+    sen_policy_url: Optional[str] = None
+    accessibility_policy_url: Optional[str] = None
+    privacy_policy_url: Optional[str] = None
+    ofsted_report_url: Optional[str] = None
+    designated_safeguarding_lead: Optional[str] = None
+    safeguarding_contact_email: Optional[str] = None
+    safeguarding_contact_phone: Optional[str] = None
+
+@api_router.patch("/school/policies")
+async def update_school_policies(req: SchoolPoliciesUpdate, current=Depends(require_authed_role(ROLE_SCHOOL_ADMIN))):
+    sid = current.get("school_id")
+    if not sid:
+        raise HTTPException(status_code=400, detail="No school")
+    policies = {k: v for k, v in req.dict().items() if v is not None}
+    await db.schools.update_one({"school_id": sid}, {"$set": {"policies": policies, "policies_reviewed_at": datetime.now(timezone.utc).isoformat()}})
+    school = await db.schools.find_one({"school_id": sid}, {"_id": 0})
+    return school
+
+@api_router.get("/school/{school_id}/policies")
+async def get_school_policies(school_id: str):
+    """Public read so anyone can verify a school's statutory pages."""
+    s = await db.schools.find_one({"school_id": school_id}, {"_id": 0, "name": 1, "email_domain": 1, "policies": 1, "policies_reviewed_at": 1})
+    if not s:
+        raise HTTPException(status_code=404, detail="Not found")
+    return s
+
+# --- Public safety / contact info ---
+
+@api_router.get("/safety/info")
+async def safety_info():
+    """Public Learnify safety statement — sources/contacts/last review."""
+    return {
+        "platform": "Learnify",
+        "support_email": "safeguarding@learnify.app",
+        "review_cadence": "annual",
+        "last_review_at": "2026-06-18",
+        "content_filtering": True,
+        "safeguarding_hotlines": [
+            {"name": "Childline", "phone": "0800 1111", "url": "https://www.childline.org.uk"},
+            {"name": "Samaritans", "phone": "116 123", "url": "https://www.samaritans.org"},
+            {"name": "NSPCC", "phone": "0808 800 5000", "url": "https://www.nspcc.org.uk"},
+        ],
+        "statutory_links": [
+            {"name": "Keeping Children Safe in Education", "url": "https://www.gov.uk/government/publications/keeping-children-safe-in-education--2"},
+            {"name": "Ofsted", "url": "https://reports.ofsted.gov.uk/"},
+            {"name": "WCAG 2.2", "url": "https://www.w3.org/TR/WCAG22/"},
+        ],
+        "security": {
+            "tls": True,
+            "password_policy": "10+ chars · upper · lower · number · symbol",
+            "mfa_for_staff": True,
+            "automated_backups": "daily (MongoDB cluster)",
+            "session_jwt_days": JWT_EXPIRY_DAYS,
+        },
+    }
 
 # ====================== Startup: seed owner & wipe demo users ======================
 

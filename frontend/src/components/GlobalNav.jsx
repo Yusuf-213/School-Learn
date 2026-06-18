@@ -1,7 +1,8 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { GraduationCap, House, BookOpen, Timer, ChartLine, CreditCard, Question, SignIn, List, X, SignOut, ChalkboardTeacher, Compass, Chat, Crown, Trophy } from "@phosphor-icons/react";
+import { GraduationCap, House, BookOpen, Timer, ChartLine, CreditCard, Question, SignIn, List, X, SignOut, ChalkboardTeacher, Compass, Chat, Crown, Trophy, ShieldCheck } from "@phosphor-icons/react";
 import { useState } from "react";
+import AccessibilityMenu from "@/components/AccessibilityMenu";
 
 const PUBLIC_LINKS = [
   { to: "/", label: "Home", icon: House, testid: "nav-home", end: true },
@@ -96,6 +97,7 @@ export default function GlobalNav() {
         </nav>
 
         <div className="flex items-center gap-2 shrink-0">
+          <AccessibilityMenu />
           {user ? (
             <div className="hidden lg:flex items-center gap-2">
               <span className="inline-flex items-center gap-2 border-2 border-ink rounded-md bg-white px-2 py-1.5 shadow-brutal">

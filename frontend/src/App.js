@@ -3,6 +3,9 @@ import "@/App.css";
 import { AuthProvider } from "@/context/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { Toaster } from "@/components/ui/sonner";
+import { applyA11yOnLoad } from "@/components/AccessibilityMenu";
+
+applyA11yOnLoad();
 
 import Landing from "@/pages/Landing";
 import Login from "@/pages/Login";
@@ -22,6 +25,9 @@ import Teacher from "@/pages/Teacher";
 import MyRecord from "@/pages/MyRecord";
 import Dreams from "@/pages/Dreams";
 import Suggestions from "@/pages/Suggestions";
+import Safety from "@/pages/Safety";
+import Contact from "@/pages/Contact";
+import MfaSetup from "@/pages/MfaSetup";
 
 function AppRouter() {
   const location = useLocation();
@@ -48,6 +54,9 @@ function AppRouter() {
       <Route path="/my-record" element={<ProtectedRoute><MyRecord /></ProtectedRoute>} />
       <Route path="/dreams" element={<ProtectedRoute><Dreams /></ProtectedRoute>} />
       <Route path="/suggestions" element={<ProtectedRoute><Suggestions /></ProtectedRoute>} />
+      <Route path="/safety" element={<Safety />} />
+      <Route path="/contact" element={<Contact />} />
+      <Route path="/mfa" element={<ProtectedRoute><MfaSetup /></ProtectedRoute>} />
       <Route path="*" element={<Landing />} />
     </Routes>
   );

@@ -1,9 +1,23 @@
 @import url('https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,900,400,500,700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+@import url('https://fonts.cdnfonts.com/css/opendyslexic');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ====================== Accessibility classes ====================== */
+.a11y-dyslexia, .a11y-dyslexia body, .a11y-dyslexia h1, .a11y-dyslexia h2, .a11y-dyslexia h3, .a11y-dyslexia h4, .a11y-dyslexia h5, .a11y-dyslexia h6 {
+  font-family: 'OpenDyslexic', 'IBM Plex Sans', sans-serif !important;
+  letter-spacing: 0.02em !important;
+}
+.a11y-large-text { font-size: 125%; }
+.a11y-high-contrast { filter: contrast(1.15) saturate(1.1); }
+.a11y-high-contrast .text-\[\#4A4A4A\] { color: #111 !important; }
+.a11y-reduce-motion *, .a11y-reduce-motion *::before, .a11y-reduce-motion *::after {
+  animation-duration: 0ms !important;
+  transition-duration: 0ms !important;
+}
 
 html, body, #root {
   background-color: #FBF9F6;
