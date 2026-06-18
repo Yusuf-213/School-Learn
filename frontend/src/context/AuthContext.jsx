@@ -2,37 +2,62 @@ import { createContext, useContext, useEffect, useState, useCallback } from "rea
 import { api } from "@/lib/api";
 
 const AuthContext = createContext(null);
+const USER_KEY = "scholarhub_user";
+
+function readCachedUser() {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedUser(user) {
+  try {
+    if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
+    else localStorage.removeItem(USER_KEY);
+  } catch {}
+}
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // Initialize user from localStorage IMMEDIATELY — no loading flash, no false redirect on refresh.
+  const [user, setUserState] = useState(() => readCachedUser());
+  const [loading, setLoading] = useState(false);
+
+  const setUser = useCallback((u) => {
+    setUserState(u);
+    writeCachedUser(u);
+  }, []);
 
   const checkAuth = useCallback(async () => {
-    // Skip probe entirely if no token AND no cookie likely set
     const hasToken = typeof window !== "undefined" && localStorage.getItem("token");
     const hasCookie = typeof document !== "undefined" && document.cookie.includes("session_token");
     if (!hasToken && !hasCookie) {
       setUser(null);
-      setLoading(false);
       return;
     }
     try {
-      const { data } = await api.get("/auth/me");
-      setUser(data);
-    } catch {
-      setUser(null);
-    } finally {
-      setLoading(false);
+      const res = await api.get("/auth/me");
+      setUser(res.data);
+      // Persist refreshed JWT if backend rotated it
+      const refreshed = res.headers["x-refresh-token"] || res.headers["X-Refresh-Token"];
+      if (refreshed) localStorage.setItem("token", refreshed);
+    } catch (err) {
+      // ONLY clear the session on an explicit 401. Network blips and 5xx keep the user logged in.
+      if (err?.response?.status === 401) {
+        localStorage.removeItem("token");
+        setUser(null);
+      }
     }
-  }, []);
+  }, [setUser]);
 
   useEffect(() => {
-    // CRITICAL: If returning from Emergent OAuth callback, skip /me check.
-    // AuthCallback will exchange the session_id and establish the session first.
+    // Skip background probe if returning from Emergent OAuth callback
     if (typeof window !== "undefined" && window.location.hash?.includes("session_id=")) {
-      setLoading(false);
       return;
     }
+    // Validate in background — does not gate the UI.
     checkAuth();
   }, [checkAuth]);
 
@@ -56,10 +81,8 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
-  const refreshUser = checkAuth;
-
   return (
-    <AuthContext.Provider value={{ user, loading, loginWithEmail, registerWithEmail, logout, refreshUser, setUser }}>
+    <AuthContext.Provider value={{ user, loading, loginWithEmail, registerWithEmail, logout, refreshUser: checkAuth, setUser }}>
       {children}
     </AuthContext.Provider>
   );

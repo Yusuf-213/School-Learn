@@ -30,7 +30,8 @@ STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', '')
 MS_CLIENT_ID = os.environ.get('MS_CLIENT_ID', '')
 MS_TENANT_ID = os.environ.get('MS_TENANT_ID', 'common')
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRY_DAYS = 7
+JWT_EXPIRY_DAYS = 365  # 1 year — login persists across reasonable usage. Refreshed on /auth/me.
+JWT_REFRESH_AT_DAYS = 60  # If token is older than this when used, mint a new one in response header.
 
 # Subscription plans (GBP). Amounts are server-side ONLY (never trust frontend).
 PLANS = {
@@ -302,7 +303,25 @@ async def google_session(req: GoogleSessionRequest, response: Response):
     }
 
 @api_router.get("/auth/me")
-async def auth_me(current=Depends(get_current_user)):
+async def auth_me(response: Response, current=Depends(get_current_user),
+                  authorization: Optional[str] = Header(default=None),
+                  session_token: Optional[str] = Cookie(default=None)):
+    # Auto-refresh JWT if it was issued > JWT_REFRESH_AT_DAYS ago. Returned in X-Refresh-Token header.
+    token = None
+    if session_token:
+        token = session_token
+    if not token and authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    if token:
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+            iat = payload.get("iat")
+            if iat:
+                age_days = (datetime.now(timezone.utc).timestamp() - iat) / 86400
+                if age_days > JWT_REFRESH_AT_DAYS:
+                    response.headers["X-Refresh-Token"] = make_jwt(current["user_id"])
+        except jwt.PyJWTError:
+            pass
     return current
 
 @api_router.post("/auth/logout")
