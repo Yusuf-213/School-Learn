@@ -1,27 +1,53 @@
-# ScholarHub — Product Requirements
+# Learnify — Product Requirements
 
-## Original Problem
-Build a student revision app covering Math, English, Science, History, PE — expanded with foreign languages, arts, vocational, humanities. UK pricing. Persistent nav. Homework Helper. International grade-level support.
+## Original Problem (Iteration 5 ask)
+Rebrand to **Learnify**, build a full school SaaS competing with Sparx / Bedrock / Seneca / Teams. Wipe demo users; seed owner Yusufm_1. Owner panel showing every school. School signup with domain, sizes, class names, SLT. Teacher panel with lesson planner (AI), homework + AI class+per-student analysis with expected grades, detentions. Student panel: detentions, attendance, achievements. Dreams page. Suggestions page. New 3-step signup (email→name→password). School pricing: £750/£1500/£3000 per year.
 
-## User Choices
-- VPN skipped, Focus Mode for in-app lockdown.
-- AI content via Claude Sonnet 4.5 (Emergent LLM key).
-- Auth: Email/password (JWT) + Emergent Google. No Microsoft.
-- Subjects: 23 across 6 categories.
-- Pricing (GBP): Free / £5 / £10 / £15 / £500/yr school.
-- Persistent GlobalNav on every page.
-- **Grade levels (iter 4)**: Full international support — UK Years 7–13 (KS3/GCSE/AS/A2), US Grades 9–12, Canada 9–12, Australia Years 7–12, Germany Sekundarstufe I/II, Japan 中学校/高校, China 初中/高中, plus ISCED-2/3 generic and Early Years and Higher Ed. All AI prompts calibrate to the chosen system.
+## Implemented (Iteration 5)
+### Backend
+- Roles: owner, school_admin, teacher, student, individual.
+- Owner seeded on startup (`Yusufm_1` / `yusufm_1@outlook.com` / `The_Underdog`). Demo data wiped on first start (idempotent marker).
+- Username-or-email login: `POST /api/auth/login_username`.
+- School signup: `POST /api/auth/signup_school` (creates school + classes + admin user; enforces contact email matches domain).
+- Owner endpoints: `/api/owner/stats`, `/api/owner/schools`, `/api/owner/suggestions` (with student/teacher/class/homework counts).
+- Teacher endpoints: `/api/teacher/lessons` (AI lesson plan with starter/main/plenary/differentiation/homework/success_criteria), `/api/teacher/homework`, `/api/teacher/homework/{id}/analyze` (class overview, top misconceptions, recommended next lesson, per-student strengths/weaknesses/next steps/expected grade), `/api/teacher/detention`, `/api/teacher/attendance`, `/api/teacher/achievement`.
+- Student endpoints: `/api/student/my-detentions`, `/api/student/my-attendance` (with rate %), `/api/student/my-achievements`, `/api/student/dreams` (AI path), `/api/student/homework`, `/api/student/homework/submit` (AI marking).
+- Suggestions: `/api/suggestions` (POST) + `/api/owner/suggestions` (GET, owner-only).
+- Stripe checkout updated to accept school_small/school_medium/school_large.
+- PLANS updated: school_small £750, school_medium £1500, school_large £3000 (per year, whole school).
 
-## Implemented
-- **Backend**: JWT auth, Emergent Google, Stripe Checkout subs, AI generation (5 types + papers), Socratic Homework Helper, focus sessions, progress, stats. `_grade_descriptor` shared mapping across all AI prompts (summary/quiz/flashcards/explanation/paper/chat/help) — calibrates by country-specific curriculum.
-- **Frontend**: GlobalNav (Home/Classes/Help/Plans/Sign in-out) on every page. `GradeLevelSelect` component with grouped `<optgroup>` (UK, US, Canada, AU, DE, JP, CN, etc.) used in Register, Dashboard, Help, Topic display.
-- **Testing**: 40/40 non-LLM tests pass; LLM-dependent test failed only due to Emergent key budget cap.
+### Frontend
+- Full rebrand to **Learnify** (landing, nav, footer, copy).
+- 3-step signup: email → first name → password+grade.
+- 4-step school signup: details → size/classes → school lead → plan.
+- Role-aware GlobalNav (Owner HQ for owner; Teach for teachers; My record for students).
+- Owner HQ at `/owner`: stats, schools table with live counts, suggestions inbox.
+- Teacher panel at `/teacher`: AI lesson planner, homework with AI analysis, detentions.
+- Student panel at `/my-record`: tabs for detentions, attendance, achievements.
+- Dreams at `/dreams`: AI life path mapping.
+- Suggestions at `/suggestions`.
+- Pricing page with Individuals/Schools tabs.
+- Login accepts email OR username.
 
-## Backlog
-- P1: OCR image upload for Homework Helper.
-- P1: Spaced-repetition flashcards, streaks, real PDF export.
-- P2: Teacher dashboard (not yet requested).
-- P2: Split server.py into routers.
+## Testing
+- 18/18 new pytest tests pass.
+- All 9 frontend UI flows verified live.
+- One bug found & fixed (ObjectId in signup_school response).
+- One follow-up applied (CheckoutCreateRequest Literal widened).
 
-## Notes for User
-- **Emergent LLM key budget exceeded** during the last test run. Top up at Profile → Universal Key → Add Balance, or enable auto top-up.
+## Owner credentials
+- Username: `Yusufm_1` · Email: `Yusufm_1@outlook.com` · Password: `The_Underdog`
+- Role: owner (bypasses every role check; can hit any endpoint).
+
+## Backlog (P1 / P2)
+- P1: Split server.py (now 1,700+ lines) into routers (auth, owner, teacher, student, ai, billing).
+- P1: Email-domain-gated student/teacher self-signup (so students can join via @school.uk email).
+- P1: Lesson video calling, structured class chat feed.
+- P1: Spaced-repetition flashcards, real PDF export.
+- P2: Age-shifted UI (preschool voice-first / primary gamified / secondary focused).
+- P2: Parent multi-child accounts, offline mode (SW + IndexedDB).
+
+## Notes
+- Database wiped clean — only owner remains.
+- Stripe test mode active; checkout works for new school tiers.
+- `_grade_descriptor` unified all AI calibration across endpoints.

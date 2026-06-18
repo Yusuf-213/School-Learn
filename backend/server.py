@@ -105,7 +105,7 @@ class AIGenerateRequest(BaseModel):
     exam_board: Optional[str] = None  # 'aqa','edexcel','ocr','ib','cie','generic'
 
 class CheckoutCreateRequest(BaseModel):
-    plan_id: Literal["basic", "standard", "pro", "school"]
+    plan_id: Literal["basic", "standard", "pro", "school_small", "school_medium", "school_large"]
     origin_url: str
 
 class AIChatRequest(BaseModel):
