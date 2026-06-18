@@ -30,7 +30,10 @@ export default function Register() {
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
-    if (form.password.length < 6) { setErr("Password must be at least 6 characters."); return; }
+    if (form.password.length < 10) { setErr("Password must be at least 10 characters."); return; }
+    if (!/[A-Z]/.test(form.password) || !/[a-z]/.test(form.password) || !/\d/.test(form.password) || !/[!@#$%^&*()_+\-={}\[\]:;"'<>,.?/\\|`~]/.test(form.password)) {
+      setErr("Password needs upper, lower, a number and a symbol."); return;
+    }
     setLoading(true);
     try {
       await registerWithEmail(form);
@@ -66,7 +69,7 @@ export default function Register() {
             <p className="text-[#4A4A4A] mb-6 text-sm">
               {step === 1 && "We'll use this to send you study reminders. Use a school email if you have one."}
               {step === 2 && "We'll greet you with this on every page."}
-              {step === 3 && "Pick a strong password — at least 6 characters."}
+              {step === 3 && "Pick a strong password — at least 10 characters with upper, lower, a number and a symbol."}
             </p>
 
             {err && (
@@ -120,7 +123,7 @@ export default function Register() {
                     data-testid="register-password-input"
                     type="password" required autoFocus value={form.password}
                     onChange={(e) => setForm({ ...form, password: e.target.value })}
-                    className="mt-2 brutal-input w-full" placeholder="At least 6 characters" />
+                    className="mt-2 brutal-input w-full" placeholder="10+ chars · Aa1!" />
                 </label>
                 <label className="block">
                   <span className="text-xs uppercase tracking-[0.2em] font-bold">Grade / year level</span>

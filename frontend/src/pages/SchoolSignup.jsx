@@ -49,7 +49,10 @@ export default function SchoolSignup() {
       if (!form.contact_email.includes("@" + form.school_email_domain)) {
         return setErr(`Contact email must end with @${form.school_email_domain}.`);
       }
-      if (form.contact_password.length < 6) return setErr("Password must be at least 6 characters.");
+      if (form.contact_password.length < 10) return setErr("Password must be at least 10 characters with upper, lower, number and symbol.");
+      if (!/[A-Z]/.test(form.contact_password) || !/[a-z]/.test(form.contact_password) || !/\d/.test(form.contact_password) || !/[!@#$%^&*()_+\-={}\[\]:;"'<>,.?/\\|`~]/.test(form.contact_password)) {
+        return setErr("Password must contain upper, lower, a number and a symbol.");
+      }
     }
     setStep((s) => s + 1);
   };
@@ -76,7 +79,10 @@ export default function SchoolSignup() {
       localStorage.setItem("token", data.token);
       setUser(data.user);
       if (data.school?.promo_code_applied) {
-        toast.success(`Promo ${data.school.promo_code_applied} applied — free for 365 days. Skipping payment.`);
+        const msg = data.school.subscription_lifetime
+          ? `Promo ${data.school.promo_code_applied} applied — free forever. No payment needed.`
+          : `Promo ${data.school.promo_code_applied} applied. Skipping payment.`;
+        toast.success(msg);
         navigate("/dashboard");
       } else {
         toast.success("School registered! Set up your subscription next.");
@@ -187,7 +193,7 @@ export default function SchoolSignup() {
                 <span className="text-xs uppercase tracking-[0.2em] font-bold">Password</span>
                 <input data-testid="school-contact-password" type="password" required value={form.contact_password}
                   onChange={(e) => setForm({ ...form, contact_password: e.target.value })}
-                  className="mt-2 brutal-input w-full" placeholder="At least 6 characters" />
+                  className="mt-2 brutal-input w-full" placeholder="10+ chars · Aa1!" />
               </label>
               <label className="block">
                 <span className="text-xs uppercase tracking-[0.2em] font-bold">SLT email addresses (one per line, optional)</span>
