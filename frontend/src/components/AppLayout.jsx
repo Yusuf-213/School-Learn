@@ -11,6 +11,7 @@ export default function AppLayout({ children }) {
       <footer className="border-t-2 border-ink py-4 text-center text-xs text-[#4A4A4A]">
         <div className="space-x-4">
           <Link to="/safety" className="underline hover:text-ink" data-testid="footer-safety">Safety & safeguarding</Link>
+          <Link to="/dpa" className="underline hover:text-ink" data-testid="footer-dpa">Privacy & DPA</Link>
           <Link to="/contact" className="underline hover:text-ink" data-testid="footer-contact">Contact</Link>
           <Link to="/mfa" className="underline hover:text-ink" data-testid="footer-mfa">Two-factor auth</Link>
         </div>

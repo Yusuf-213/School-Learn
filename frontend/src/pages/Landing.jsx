@@ -98,7 +98,7 @@ export default function Landing() {
           <div className="flex items-end justify-between mb-10 flex-wrap gap-4">
             <div>
               <div className="text-xs tracking-[0.2em] uppercase font-bold mb-3">23 subjects · 6 categories</div>
-              <h2 className="font-display font-extrabold text-4xl sm:text-5xl tracking-tight">From phonics to PhD.</h2>
+              <h2 className="font-display font-extrabold text-4xl sm:text-5xl tracking-tight">From phonics to university.</h2>
             </div>
             <p className="max-w-md text-[#4A4A4A]">UI shifts with age — voice-first for early years, gamified for primary, focused for secondary.</p>
           </div>

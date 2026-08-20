@@ -37,7 +37,16 @@
 - Persisted to `localStorage`; applied at app load.
 
 **Footer**
-- Footer now links to Safety, Contact, MFA on every page.
+- Footer now links to Safety, Privacy & DPA, Contact, MFA on every page.
+
+## Iteration 7 — Encrypted UK GDPR / DPA legal document
+
+### Done
+- New `School Learn — UK GDPR Privacy Notice and Data Processing Agreement` document stored **encrypted at rest** in `db.legal_docs` using Fernet (AES-128-CBC + HMAC-SHA256). Key held in backend env only (`DPA_ENCRYPTION_KEY`).
+- Startup seeds the ciphertext idempotently (checksum-guarded); no LLM calls, no external requests.
+- Public endpoint `GET /api/legal/dpa` decrypts on demand and returns the 14-section document + SHA-256 integrity checksum.
+- New `/dpa` (alias `/privacy`) page shows the decrypted document with integrity banner + section-by-section rendering.
+- Footer link on every page: "Privacy & DPA".
 
 ### Backlog / next
 - Real WAF + DDoS protection (infra, Cloudflare or similar).

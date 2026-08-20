@@ -5,7 +5,7 @@ import pytest
 import requests
 from datetime import datetime, timezone, timedelta
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://learn-hub-1262.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://student-hub-1455.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 UNIQUE = uuid.uuid4().hex[:8]

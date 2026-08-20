@@ -6,7 +6,7 @@ export default function GradeLevelSelect({ value, onChange, className = "", test
     "Early years", "Generic / ISCED",
     "United Kingdom", "United States", "Canada", "Australia",
     "Germany", "Japan", "China",
-    "Other", "Higher education",
+    "Other", "University",
   ];
   return (
     <select

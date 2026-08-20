@@ -27,6 +27,7 @@ import Dreams from "@/pages/Dreams";
 import Suggestions from "@/pages/Suggestions";
 import Safety from "@/pages/Safety";
 import Contact from "@/pages/Contact";
+import DPA from "@/pages/DPA";
 import MfaSetup from "@/pages/MfaSetup";
 import Payouts from "@/pages/Payouts";
 
@@ -57,6 +58,8 @@ function AppRouter() {
       <Route path="/suggestions" element={<ProtectedRoute><Suggestions /></ProtectedRoute>} />
       <Route path="/safety" element={<Safety />} />
       <Route path="/contact" element={<Contact />} />
+      <Route path="/dpa" element={<DPA />} />
+      <Route path="/privacy" element={<DPA />} />
       <Route path="/mfa" element={<ProtectedRoute><MfaSetup /></ProtectedRoute>} />
       <Route path="/owner/payouts" element={<ProtectedRoute><Payouts /></ProtectedRoute>} />
       <Route path="*" element={<Landing />} />

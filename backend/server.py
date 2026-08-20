@@ -11,6 +11,8 @@ import jwt
 import httpx
 import re
 import pyotp
+import hashlib
+from cryptography.fernet import Fernet, InvalidToken
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Literal
@@ -29,6 +31,8 @@ db_name = os.environ['DB_NAME']
 JWT_SECRET = os.environ['JWT_SECRET']
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', '')
+DPA_ENCRYPTION_KEY = os.environ['DPA_ENCRYPTION_KEY']
+_fernet = Fernet(DPA_ENCRYPTION_KEY.encode() if isinstance(DPA_ENCRYPTION_KEY, str) else DPA_ENCRYPTION_KEY)
 MS_CLIENT_ID = os.environ.get('MS_CLIENT_ID', '')
 MS_TENANT_ID = os.environ.get('MS_TENANT_ID', 'common')
 JWT_ALGORITHM = "HS256"
@@ -508,8 +512,8 @@ def _grade_descriptor(grade_level: str) -> str:
         "high_school":      "high school (ages 14-18), rigorous but accessible, include key terminology",
         # higher ed
         "undergrad":        "undergraduate university level, academic tone with proper terminology and depth",
-        "grad":             "graduate level, advanced concepts and nuanced analysis",
-        "phd":              "PhD level, scholarly tone, cite frameworks and current research directions",
+        "grad":             "university master's level, advanced concepts and nuanced analysis",
+        "phd":              "university doctoral level, scholarly tone, cite frameworks and current research directions",
     }
     return grade_map.get(grade_level, grade_map["high_school"])
 
@@ -1948,10 +1952,153 @@ async def safety_info():
         },
     }
 
+# ====================== Legal: encrypted UK GDPR / DPA document ======================
+
+DPA_DOC_ID = "school_learn_uk_gdpr_dpa_v1"
+
+DPA_DOCUMENT = {
+    "title": "SCHOOL LEARN — UK GDPR PRIVACY NOTICE AND DATA PROCESSING AGREEMENT",
+    "version": "1.0",
+    "effective_date": "2026-02-01",
+    "contents": [
+        "1. Introduction",
+        "2. Roles and Responsibilities",
+        "3. Personal Data We Process",
+        "4. Purposes of Processing",
+        "5. Lawful Bases for Processing",
+        "6. Security Measures",
+        "7. Sub-processors",
+        "8. Data Subject Rights",
+        "9. Personal Data Breaches",
+        "10. International Transfers",
+        "11. Retention and Deletion",
+        "12. Children's Data",
+        "13. Complaints",
+        "14. Liability",
+    ],
+    "sections": [
+        {
+            "heading": "Introduction",
+            "body": "School Learn is an educational platform designed to support teaching, learning, assessment, revision activities and AI-assisted educational services. This document explains what personal data is processed, why it is processed, how it is protected and the rights of individuals under UK GDPR and the Data Protection Act 2018.",
+        },
+        {
+            "heading": "Roles and Responsibilities",
+            "body": "Schools and educational institutions generally act as Data Controllers. School Learn acts as a Data Processor and processes personal data only on documented instructions from the Controller.",
+        },
+        {
+            "heading": "Personal Data We Process",
+            "body": "The platform may process names, school email addresses, user account details, assessment and attainment information, homework submissions, learning progress information, user-generated educational content and limited technical security data.",
+        },
+        {
+            "heading": "Purposes of Processing",
+            "body": "Processing supports account management, delivery of educational content, assessments, revision activities, AI-assisted support, safeguarding, security and compliance obligations.",
+        },
+        {
+            "heading": "Lawful Bases for Processing",
+            "body": "Processing may rely on Legal Obligation, Public Task, Contract and Legitimate Interests where appropriate. Special category data will only be processed where a relevant Article 9 condition applies.",
+        },
+        {
+            "heading": "Security Measures",
+            "body": "Appropriate technical and organisational measures are implemented, including encryption, access controls, security monitoring and secure development practices.",
+        },
+        {
+            "heading": "Sub-processors",
+            "body": "Approved third-party providers may be used to host or support the service. All sub-processors are subject to contractual data protection obligations equivalent to UK GDPR requirements.",
+        },
+        {
+            "heading": "Data Subject Rights",
+            "body": "Individuals may exercise rights of access, rectification, erasure, restriction, portability and objection, subject to applicable law.",
+        },
+        {
+            "heading": "Personal Data Breaches",
+            "body": "School Learn will notify Controllers without undue delay after becoming aware of a personal data breach affecting personal data processed on their behalf.",
+        },
+        {
+            "heading": "International Transfers",
+            "body": "International transfers will only occur where appropriate safeguards are in place, including adequacy regulations, IDTA or the UK Addendum to SCCs.",
+        },
+        {
+            "heading": "Retention and Deletion",
+            "body": "Personal data is retained only for as long as necessary and deleted or returned upon termination of services, subject to legal obligations.",
+        },
+        {
+            "heading": "Children's Data",
+            "body": "The platform is designed with children's privacy and safeguarding considerations in mind and processes children's data only for legitimate educational purposes.",
+        },
+        {
+            "heading": "Complaints",
+            "body": "Individuals may contact their institution or the Information Commissioner's Office (ICO) regarding concerns about personal data processing.",
+        },
+        {
+            "heading": "Liability",
+            "body": "Each party remains responsible for its own obligations under applicable data protection legislation. Nothing seeks to exclude liability where doing so would be unlawful.",
+        },
+    ],
+}
+
+
+def _encrypt_json(obj: dict) -> str:
+    raw = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+    return _fernet.encrypt(raw).decode("utf-8")
+
+
+def _decrypt_json(ciphertext: str) -> dict:
+    return json.loads(_fernet.decrypt(ciphertext.encode("utf-8")).decode("utf-8"))
+
+
+async def _seed_dpa_document():
+    """Encrypt the DPA at rest and store it in Mongo. Idempotent — updates on version bump."""
+    doc_json = json.dumps(DPA_DOCUMENT, ensure_ascii=False, sort_keys=True)
+    checksum = hashlib.sha256(doc_json.encode("utf-8")).hexdigest()
+    existing = await db.legal_docs.find_one({"doc_id": DPA_DOC_ID})
+    if existing and existing.get("checksum") == checksum:
+        return
+    ciphertext = _encrypt_json(DPA_DOCUMENT)
+    await db.legal_docs.update_one(
+        {"doc_id": DPA_DOC_ID},
+        {"$set": {
+            "doc_id": DPA_DOC_ID,
+            "title": DPA_DOCUMENT["title"],
+            "version": DPA_DOCUMENT["version"],
+            "effective_date": DPA_DOCUMENT["effective_date"],
+            "ciphertext": ciphertext,
+            "checksum": checksum,
+            "algorithm": "Fernet (AES-128-CBC + HMAC-SHA256)",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+
+
+@api_router.get("/legal/dpa")
+async def get_dpa_document():
+    """Public: returns the decrypted UK GDPR Privacy Notice + DPA."""
+    row = await db.legal_docs.find_one({"doc_id": DPA_DOC_ID})
+    if not row:
+        await _seed_dpa_document()
+        row = await db.legal_docs.find_one({"doc_id": DPA_DOC_ID})
+    try:
+        document = _decrypt_json(row["ciphertext"])
+    except InvalidToken:
+        raise HTTPException(status_code=500, detail="DPA document could not be decrypted")
+    return {
+        "doc_id": row["doc_id"],
+        "version": row.get("version"),
+        "effective_date": row.get("effective_date"),
+        "algorithm": row.get("algorithm"),
+        "checksum": row.get("checksum"),
+        "updated_at": row.get("updated_at"),
+        "document": document,
+    }
+
+
 # ====================== Startup: seed owner & wipe demo users ======================
 
 @app.on_event("startup")
 async def startup():
+    # Encrypt & store the UK GDPR / DPA document at rest
+    await _seed_dpa_document()
+
     # Seed/refresh owner account
     owner = await db.users.find_one({"email": OWNER_EMAIL.lower()})
     if not owner:

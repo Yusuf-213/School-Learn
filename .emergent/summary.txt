@@ -1,0 +1,143 @@
+<analysis>**original_problem_statement**: 
+Build an all-in-one educational app (rebranded as Learnify) for students (preschool to university). It requires AI-powered revision materials across all core subjects, a focus mode (time limit blocker), school signups with teacher/student/owner roles, Stripe payments for various tiers, homework/lesson planners, detentions/attendance tracking, comprehensive safety/compliance features (AI moderation, MFA, accessibility), and a promo code system for schools (specifically a lifetime free code ).
+
+**User's preferred language**: INSTRUCT next agent to respond in **English** only.
+
+**what currently exists?** 
+A functional full-stack application (Learnify) with role-based dashboards (Owner, Teacher, Student). It includes a robust authentication system (permanent login), school signup flows with lifetime promo codes, Stripe billing integrations, AI-powered homework helpers and lesson planners with built-in content moderation, and UK school-grade safety compliance pages.
+
+**Last working item**: 
+    - Last item agent was working: Updating the curriculum/grade levels mapping to incorporate the user's detailed list (Preschool to University) and explicitly replacing PHD with University across the frontend and backend.
+    - Status: IN PROGRESS
+    - Agent Testing Done: N
+    - Which testing method agent to use? backend testing agent (to ensure schema validation hasn't broken) / screenshot tool (for frontend dropdowns).
+    - User Testing Done: N
+
+**All Pending/In progress Issue list**:
+  - Issue 1: Failed text replacements for curriculum mapping
+     - Attempted fixes: Agent tried 7  calls in the last turn. Two failed in  (one because  didn't match verbatim, one because  and  were identical). 
+     - Next debug checklist: Check  and  to manually verify the grade levels and subjects schemas. Ensure PHD is replaced with University and the new detailed curriculum subjects are available without breaking Pydantic validation.
+     - Why fix this issue and what will be achieved with the fix? Completes the user's direct instruction to expand the curriculum scope accurately.
+     - Status: IN PROGRESS
+     - Is recurring issue? N
+     - Should Test frontend/backend/both after fix? Both.
+     - Blocked on other issue: None
+
+**In progress Task List**:
+  - Task 1: Comprehensive Curriculum Integration
+     - Where to resume: Review the user's last massive prompt containing the detailed subject-by-subject map of formal education and integrate these sub-topics into the AI prompts and frontend subject selection.
+     - What will be achieved with this? Enhances the AI's contextual awareness of grade-specific curricula (e.g., teaching phonics to K-1, calculus to high school).
+     - Status: IN PROGRESS
+     - Should Test frontend/backend/both after fix? Both
+     - Blocked on something: None
+
+**Upcoming and Future Tasks**:
+    Upcoming Tasks:
+    - P0: Build the **Owner Promo Code Dashboard**. The agent proposed this (allowing the owner to mint new promo codes on the fly with expiry/usage caps) and the user explicitly replied Yes. (UI in  and backend endpoints required).
+    - P1: Verify MFA Enforcements. Ensure the newly added  is fully wired to the backend for staff (teachers/owners) to satisfy the user's strict safeguarding requirements.
+    
+    Future Tasks:
+    - P2: Implement the Dreams feature logic fully (student inputs their dream, AI maps the best route based on their grades/subjects). UI is scaffolded but needs deep AI prompt mapping.
+
+**Completed work in this session**:
+- Fully bootstrapped React + FastAPI + MongoDB stack.
+- JWT Authentication with permanent login fixes (localStorage fallback).
+- Stripe Integration (plans: free, basic, standard, pro, school_small, school_medium, school_large).
+- Role-based Access Control (Owner, Teacher, Student) and corresponding dashboards (, , ).
+- AI Homework Helper (Socratic method) and AI Lesson Planner (, ).
+- School Signup flow with lifetime promo code  logic ().
+- Tracking systems: Detentions, Attendance/Registers, Achievement points.
+- Owner Payouts view ().
+- Safety & Compliance: AI Prompt Moderation, Accessibility Menu, Statutory pages (, ).
+- Rebranded entire application to Learnify and removed all Made with Emergent badges.
+
+**Earlier issues found/mentioned but not fixed**:
+   - Issue 1: Large  file size
+   - Debug checklist:  is approaching 2000 lines. 
+   - Why to solve this issue and what will be achieved with this? Makes future feature additions and debugging manageable.
+   - Should Test frontend/backend/both after fix: Backend
+   - Is recurring issue? N
+
+**Known issue recurrence from previous fork**:
+  - Issue recurrence in previous fork: LLM Budget Exceeded Error (LiteLLM BadRequestError).
+  - Recurrence count: 1
+  - Status: RESOLVED (User recharged). Next agent must handle exceptions gracefully if the key runs out of budget.
+  - Issue recurrence in previous fork: JWT Token Expiry / Fragile Session.
+  - Recurrence count: 1
+  - Status: RESOLVED (Agent moved to permanent localStorage caching and decoupled auth errors from aggressive logouts). Do not revert auth logic.
+
+**Code Architecture**:
+
+
+**Key Technical Concepts**:
+React SPA (Tailwind, Shadcn), FastAPI (async router), MongoDB (Motor AsyncIOMotorClient), JWT Auth, LiteLLM (Emergent Integrations), Stripe Checkout.
+
+**key DB schema**:
+  - users: {user_id, email, hashed_password, role, school_id, grade_level}
+  - schools: {school_id, name, email_domain, plan, subscription_expires_at, subscription_lifetime}
+  - ai_history: {session_id, user_id, messages}
+  - classes, homework, detentions, registers, achievements.
+
+**changes in tech stack**:
+  - Added  to backend for MFA generation.
+
+**All files of reference**:
+  -  (Core backend)
+  -  (Includes the  promo logic)
+  -  (Needs the upcoming promo code dashboard)
+  -  (Updated specifications)
+  -  (Contains owner login:  / )
+
+**Areas that need refactoring**:
+  - : Should ideally be split into routers (auth, ai, teacher, owner, school) to avoid a >2000 line monolith.
+
+**key api endpoints**:
+  - , , 
+  -  (Handles  promo)
+  - , , 
+  - , 
+
+**Critical Info for New Agent**:
+  - **Rebranding**: The app is strictly called Learnify. Never reintroduce ScholarHub or Made with Emergent text/badges.
+  - **Promo Codes**:  is hardcoded as a lifetime free code. Do not remove this. 
+  - **Owner Account**: The DB has been wiped of all demo users. The only user is the Owner ().
+  - **Safeguarding**: The backend has explicit regex content filtering on AI endpoints. Keep this intact as it's a strict user requirement for school compliance.
+
+**documents and test reports created in this job**:
+  - 
+  - 
+  -  to 
+
+**Last 10 User Messages and any pending HUMAN messages**:
+ 1. (User) Requested adding the massive curriculum list, renaming PHD to university, and adding anything else to improve the experience. -> *In Progress*
+ 2. (User) Yes (Responding to agent's suggestion to build a Promo Code Dashboard). -> *Pending*
+ 3. (User) Enforce HWA26 as free forever, verify everything works (lessons, detentions, registers, homework). -> *Completed*
+ 4. (User) Add promo code HWA26 for school signups, add Stripe payouts, connect bank account for owner. -> *Completed*
+ 5. (User) Add strict safeguarding/compliance: content filtering, MFA for staff, accessibility, remove made with emergent badge. -> *Completed*
+ 6. (User) Fix AI lesson plan, make owner see schools/payouts, only 1 user (Yusufm_1), add detentions/attendance, rebrand to Learnify. -> *Completed*
+ 7. (User) Fix login permanently (tokens were dropping). -> *Completed*
+
+**Project Health Check**:
+Working, but the last backend  commands failed. Backend requires immediate syntax/schema verification to ensure it wasn't left in a broken state.
+
+**3rd Party Integrations**:
+  - Stripe (Payments) — requires User API Key (Provided via env).
+  - Claude Sonnet 4.5 via LiteLLM (Text Generation) — uses Emergent LLM Key.
+
+**Testing status**:
+  - Testing agent used after significant changes: YES (extensively up to iteration 5).
+  - Troubleshoot agent used after agent stuck in loop: NO.
+  - Test files created: backend tests in 
+  - Known regressions: None currently, but test the backend schemas after fixing the failed text replacements.
+
+**Credentials to test flow**:
+  - Owner:  /  (Username: )
+
+**What agent forgot to execute**:
+The agent proposed building a Promo Code dashboard for the owner and the user said Yes, but the agent immediately moved on to the curriculum update and did not build the dashboard.
+
+**Debugging checklist for current issue**:
+    Issue: Failed  on curriculum mapping (PHD to university)
+    Backend files to check:  (Look for ,  Pydantic constraints, and ).
+    Frontend files to check:  (Look for the curriculum map).
+    Action: Manually read these files using  to see their current state, and perform targeted  using exact matching.</analysis>

@@ -56,9 +56,9 @@ export const GRADE_LEVELS = [
   { value: "high_school", label: "High School (14–18)", group: "Other", ages: "14-18" },
 
   // Higher education
-  { value: "undergrad", label: "Undergraduate", group: "Higher education", ages: "18+" },
-  { value: "grad", label: "Graduate / Master's", group: "Higher education", ages: "21+" },
-  { value: "phd", label: "PhD / Doctoral", group: "Higher education", ages: "24+" },
+  { value: "undergrad", label: "University · Undergraduate", group: "University", ages: "18+" },
+  { value: "grad", label: "University · Master's", group: "University", ages: "21+" },
+  { value: "phd", label: "University · Doctoral research", group: "University", ages: "24+" },
 ];
 
 export function gradeLevelLabel(value) {
