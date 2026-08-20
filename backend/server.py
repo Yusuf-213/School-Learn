@@ -1307,22 +1307,21 @@ async def signup_school(req: SchoolSignupRequest):
 
     school_id = f"school_{uuid.uuid4().hex[:10]}"
 
-    # Promo code activation — bypasses Stripe Checkout for partner/free schools.
-    # HWA26 = lifetime free, never expires.
-    PROMO_CODES = {"HWA26": {"tier": req.plan_id or "school_small", "lifetime": True, "label": "HWA26"}}
+    # Promo code activation — checks db.promo_codes first, falls back to built-in HWA26 (lifetime free).
     promo_code = (req.promo_code or "").strip().upper()
     promo_applied = None
     sub_tier = "free"
     sub_expires = None
     promo_lifetime = False
     if promo_code:
-        promo = PROMO_CODES.get(promo_code)
+        promo = await resolve_promo_code(promo_code)
         if not promo:
             raise HTTPException(status_code=400, detail="Invalid promo code")
-        sub_tier = promo["tier"]
+        sub_tier = req.plan_id or promo["tier"]
         promo_lifetime = bool(promo.get("lifetime"))
-        sub_expires = None if promo_lifetime else (datetime.now(timezone.utc) + timedelta(days=promo.get("days", 365))).isoformat()
+        sub_expires = None if promo_lifetime else (datetime.now(timezone.utc) + timedelta(days=promo.get("days") or 365)).isoformat()
         promo_applied = promo["label"]
+        await increment_promo_usage(promo_code)
 
     school_doc = {
         "school_id": school_id,
@@ -1969,8 +1968,8 @@ DPA_DOC_ID = "school_learn_uk_gdpr_dpa_v1"
 
 DPA_DOCUMENT = {
     "title": "SCHOOL LEARN — UK GDPR PRIVACY NOTICE AND DATA PROCESSING AGREEMENT",
-    "version": "1.0",
-    "effective_date": "2026-02-01",
+    "version": "1.1",
+    "effective_date": "2026-02-20",
     "contents": [
         "1. Introduction",
         "2. Roles and Responsibilities",
@@ -2194,6 +2193,43 @@ async def owner_dpa_acceptances(current=Depends(get_current_user)):
     return {"count": len(rows), "acceptances": rows}
 
 
+@api_router.get("/owner/dpa/acceptances.csv")
+async def owner_dpa_acceptances_csv(current=Depends(get_current_user)):
+    """Owner-only CSV export of the DPA acceptance log."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    from io import StringIO
+    from fastapi.responses import StreamingResponse
+    import csv
+    rows = await db.dpa_acceptances.find({}, {"_id": 0, "signature_ciphertext": 0}).sort("accepted_at", -1).to_list(5000)
+    buf = StringIO()
+    w = csv.writer(buf)
+    w.writerow([
+        "accepted_at", "email", "name_or_school", "school_id", "school_name",
+        "doc_version", "doc_checksum", "signature_sha256", "kind", "acceptance_id",
+    ])
+    for r in rows:
+        w.writerow([
+            r.get("accepted_at", ""),
+            r.get("email", ""),
+            r.get("school_name") or "",
+            r.get("school_id") or "",
+            r.get("school_name") or "",
+            r.get("doc_version", ""),
+            r.get("doc_checksum", ""),
+            r.get("signature_sha256", ""),
+            r.get("kind", "accept"),
+            r.get("acceptance_id", ""),
+        ])
+    buf.seek(0)
+    filename = f"learnify-dpa-acceptances-{datetime.now(timezone.utc).strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @api_router.post("/legal/dpa/signed-pdf")
 async def signed_dpa_pdf(payload: dict = None, current=Depends(get_current_user)):
     """Return a PDF of the DPA signed with the given school name + today's date."""
@@ -2281,6 +2317,144 @@ async def signed_dpa_pdf(payload: dict = None, current=Depends(get_current_user)
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ====================== Promo codes (owner-managed) ======================
+
+PROMO_KINDS = {"lifetime_free", "days_free"}
+PROMO_TIERS = {"school_small", "school_medium", "school_large"}
+
+
+async def resolve_promo_code(code: str) -> Optional[dict]:
+    """Look up a promo code — check DB first, fall back to the hardcoded HWA26 lifetime code."""
+    code = (code or "").strip().upper()
+    if not code:
+        return None
+    row = await db.promo_codes.find_one({"code": code, "active": True})
+    now = datetime.now(timezone.utc)
+    if row:
+        expires_at = row.get("expires_at")
+        if expires_at:
+            try:
+                exp = datetime.fromisoformat(expires_at)
+                if exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                if exp < now:
+                    return None
+            except Exception:
+                pass
+        if row.get("max_uses") and row.get("uses", 0) >= row["max_uses"]:
+            return None
+        return {
+            "code": row["code"],
+            "tier": row.get("tier", "school_small"),
+            "kind": row.get("kind", "lifetime_free"),
+            "days": row.get("days") or 365,
+            "lifetime": row.get("kind") == "lifetime_free",
+            "label": row.get("code"),
+            "source": "db",
+        }
+    # Hardcoded fallback for HWA26
+    if code == "HWA26":
+        return {"code": "HWA26", "tier": "school_small", "kind": "lifetime_free",
+                "days": 0, "lifetime": True, "label": "HWA26", "source": "builtin"}
+    return None
+
+
+async def increment_promo_usage(code: str):
+    code = (code or "").strip().upper()
+    if not code or code == "HWA26":
+        return
+    await db.promo_codes.update_one({"code": code}, {"$inc": {"uses": 1}})
+
+
+@api_router.get("/owner/promo_codes")
+async def list_promo_codes(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    rows = await db.promo_codes.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    # Prepend the built-in HWA26 for visibility
+    builtin = {
+        "code": "HWA26",
+        "kind": "lifetime_free",
+        "tier": "school_small",
+        "max_uses": None,
+        "uses": None,
+        "expires_at": None,
+        "active": True,
+        "notes": "Built-in lifetime free code (cannot be edited).",
+        "created_at": None,
+        "created_by": "system",
+        "builtin": True,
+    }
+    return {"count": len(rows) + 1, "codes": [builtin, *rows]}
+
+
+class PromoCreate(BaseModel):
+    code: str = Field(..., min_length=3, max_length=32)
+    kind: Literal["lifetime_free", "days_free"] = "lifetime_free"
+    tier: Literal["school_small", "school_medium", "school_large"] = "school_small"
+    max_uses: Optional[int] = None
+    days: Optional[int] = None            # required if kind == days_free
+    expires_at: Optional[str] = None      # ISO date
+    notes: Optional[str] = None
+
+
+@api_router.post("/owner/promo_codes")
+async def create_promo_code(req: PromoCreate, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    code = req.code.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9_\-]{3,32}", code):
+        raise HTTPException(status_code=400, detail="Code must be 3–32 chars, A–Z 0–9 _ -")
+    if code == "HWA26":
+        raise HTTPException(status_code=400, detail="HWA26 is reserved (built-in)")
+    if await db.promo_codes.find_one({"code": code}):
+        raise HTTPException(status_code=400, detail="Code already exists")
+    if req.kind == "days_free" and (not req.days or req.days <= 0):
+        raise HTTPException(status_code=400, detail="days_free requires a positive `days` value")
+    if req.max_uses is not None and req.max_uses <= 0:
+        raise HTTPException(status_code=400, detail="max_uses must be positive")
+    doc = {
+        "code": code,
+        "kind": req.kind,
+        "tier": req.tier,
+        "max_uses": req.max_uses,
+        "uses": 0,
+        "days": req.days if req.kind == "days_free" else None,
+        "expires_at": req.expires_at,
+        "notes": req.notes,
+        "active": True,
+        "created_by": current.get("email"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.promo_codes.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+class PromoPatch(BaseModel):
+    active: Optional[bool] = None
+    max_uses: Optional[int] = None
+    expires_at: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@api_router.patch("/owner/promo_codes/{code}")
+async def patch_promo_code(code: str, req: PromoPatch, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    code_up = code.strip().upper()
+    if code_up == "HWA26":
+        raise HTTPException(status_code=400, detail="HWA26 is built-in and cannot be edited")
+    updates = {k: v for k, v in req.dict(exclude_none=True).items()}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    result = await db.promo_codes.update_one({"code": code_up}, {"$set": updates})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Promo code not found")
+    row = await db.promo_codes.find_one({"code": code_up}, {"_id": 0})
+    return row
 
 
 # ====================== Startup: seed owner & wipe demo users ======================

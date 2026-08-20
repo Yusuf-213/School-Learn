@@ -68,6 +68,24 @@
 - `POST /api/legal/dpa/signed-pdf` (auth required) generates a PDF with reportlab, embedding: school name, signer name+email, timestamp, DPA SHA-256 and a bound signature SHA-256 (`user_id|checksum|school|timestamp`). Download logged as a `signed_pdf_download` acceptance kind.
 - New "Download signed PDF" card on `/dpa` for signed-in users.
 
+## Iteration 9 — Owner UI, force re-accept on version bump, promo dashboard
+
+### Done
+**Force re-accept for everyone (including owners)**
+- Bumped DPA to version **1.1** (effective 2026-02-20). Changing the JSON changes the SHA-256 checksum → `GET /api/legal/dpa/status` compares `user.accepted_checksum` against current checksum → every past acceptance is automatically invalidated → gate re-appears for every user (Yusufm_1 and Khalida both re-accepted). Historic acceptances remain in the audit log with their old version stamped.
+
+**Owner Acceptances UI**
+- New tabbed layout on `/owner`: Overview · Promo Codes · DPA Acceptances.
+- Client-side filter by email/school/version, paginated table showing timestamp, email, school, version, kind (`accept` / `signed_pdf_download`), signature hash.
+- **Export CSV** button hitting `GET /api/owner/dpa/acceptances.csv` (owner-only), returning a downloadable CSV named `learnify-dpa-acceptances-YYYYMMDD.csv`.
+
+**Promo Code Dashboard**
+- New endpoints (all owner-only): `GET /api/owner/promo_codes`, `POST /api/owner/promo_codes`, `PATCH /api/owner/promo_codes/{code}`.
+- Fields: `code`, `kind` (`lifetime_free` | `days_free`), `tier` (small/medium/large), `max_uses`, `days`, `expires_at`, `notes`, `active`.
+- `HWA26` is a **built-in** entry that always appears in the list, cannot be edited/disabled.
+- `signup_school` now calls `resolve_promo_code()` which checks `db.promo_codes` first (respects expiry + `max_uses`) then falls back to `HWA26`. Usage counter increments on redemption.
+- Owner UI has a mint form (code, kind, tier, max uses, expiry, notes) + a live table with an "Enable/Disable" toggle per code.
+
 ### Backlog / next
 - Real WAF + DDoS protection (infra, Cloudflare or similar).
 - Automated daily DB backups (configure MongoDB Atlas backup or scheduled `mongodump`).
