@@ -18,6 +18,7 @@ export default function SchoolSignup() {
   const [step, setStep] = useState(1);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [acceptPolicy, setAcceptPolicy] = useState(false);
   const [form, setForm] = useState({
     school_name: "",
     school_email_domain: "",
@@ -60,6 +61,7 @@ export default function SchoolSignup() {
   const submit = async (e) => {
     e?.preventDefault();
     setErr("");
+    if (!acceptPolicy) { setErr("You must accept the Privacy Policy & DPA to register a school."); return; }
     setLoading(true);
     try {
       const payload = {
@@ -238,6 +240,21 @@ export default function SchoolSignup() {
                   className="mt-2 brutal-input w-full font-mono tracking-widest uppercase"
                   placeholder="e.g. HWA26" />
                 <span className="text-xs text-[#4A4A4A] mt-1 inline-block">Valid codes activate your plan for free — no card needed.</span>
+              </label>
+
+              <label className="flex items-start gap-2 text-xs pt-3 border-t-2 border-ink mt-3" data-testid="school-accept-policy-row">
+                <input
+                  type="checkbox"
+                  checked={acceptPolicy}
+                  onChange={(e) => setAcceptPolicy(e.target.checked)}
+                  data-testid="school-accept-policy"
+                  className="mt-0.5"
+                />
+                <span>
+                  On behalf of the school, I accept Learnify's{" "}
+                  <Link to="/dpa" target="_blank" className="underline font-bold">Privacy Policy & Data Processing Agreement</Link>.
+                  An encrypted, timestamped record will be kept as auditable proof of acceptance.
+                </span>
               </label>
 
               <div className="flex gap-2 pt-2">

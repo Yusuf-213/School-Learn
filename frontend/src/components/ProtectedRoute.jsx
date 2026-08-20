@@ -1,5 +1,6 @@
 import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import DpaGate from "@/components/DpaGate";
 
 export default function ProtectedRoute({ children }) {
   const { user } = useAuth();
@@ -8,5 +9,5 @@ export default function ProtectedRoute({ children }) {
   if (!user) {
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
-  return children;
+  return <DpaGate>{children}</DpaGate>;
 }

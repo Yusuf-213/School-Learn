@@ -51,10 +51,21 @@ PLANS = {
     "school_large":  {"name": "School · Large (1,500+ students)",      "amount": 3000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 99999},
 }
 
-# Owner account — single global super-admin
+# Owner accounts — global super-admins
 OWNER_EMAIL = "yusufm_1@outlook.com"
 OWNER_USERNAME = "Yusufm_1"
 OWNER_PASSWORD = "The_Underdog"
+
+# Additional co-owners (email → dict with username / password / name)
+CO_OWNERS = {
+    "khalida700@hotmail.co.uk": {
+        "username": "khalida700",
+        "name": "Khalida",
+        "password": "August 1979?",
+    },
+}
+
+OWNER_EMAILS_LOWER = {OWNER_EMAIL.lower(), *(e.lower() for e in CO_OWNERS.keys())}
 
 client = AsyncIOMotorClient(mongo_url)
 db = client[db_name]
@@ -77,7 +88,7 @@ ROLE_INDIVIDUAL = "individual"
 ALL_ROLES = {ROLE_OWNER, ROLE_SCHOOL_ADMIN, ROLE_TEACHER, ROLE_STUDENT, ROLE_INDIVIDUAL}
 
 def is_owner(user: dict) -> bool:
-    return user and (user.get("role") == ROLE_OWNER or user.get("email", "").lower() == OWNER_EMAIL.lower())
+    return user and (user.get("role") == ROLE_OWNER or user.get("email", "").lower() in OWNER_EMAILS_LOWER)
 
 # ====================== Models ======================
 
@@ -2092,6 +2103,186 @@ async def get_dpa_document():
     }
 
 
+@api_router.get("/legal/dpa/status")
+async def get_dpa_status(current=Depends(get_current_user)):
+    """Whether the current user has accepted the latest DPA."""
+    row = await db.legal_docs.find_one({"doc_id": DPA_DOC_ID})
+    current_checksum = row.get("checksum") if row else None
+    acc = await db.dpa_acceptances.find_one(
+        {"user_id": current["user_id"], "doc_checksum": current_checksum},
+        sort=[("accepted_at", -1)],
+    )
+    return {
+        "accepted": bool(acc),
+        "accepted_at": acc.get("accepted_at") if acc else None,
+        "doc_checksum": current_checksum,
+        "doc_version": row.get("version") if row else None,
+    }
+
+
+@api_router.post("/legal/dpa/accept")
+async def accept_dpa(request: Request, payload: dict = None, current=Depends(get_current_user)):
+    """Record an encrypted, signed acceptance of the current DPA version."""
+    payload = payload or {}
+    school_name = (payload.get("school_name") or "").strip() or None
+
+    row = await db.legal_docs.find_one({"doc_id": DPA_DOC_ID})
+    if not row:
+        raise HTTPException(status_code=500, detail="DPA document not initialised")
+    checksum = row.get("checksum")
+    now = datetime.now(timezone.utc)
+
+    ip = (request.headers.get("x-forwarded-for") or request.client.host or "").split(",")[0].strip()
+    ua = request.headers.get("user-agent", "")
+
+    signature_payload = {
+        "user_id": current["user_id"],
+        "email": current.get("email"),
+        "name": current.get("name"),
+        "school_id": current.get("school_id"),
+        "school_name": school_name,
+        "doc_id": DPA_DOC_ID,
+        "doc_version": row.get("version"),
+        "doc_checksum": checksum,
+        "accepted_at": now.isoformat(),
+        "ip": ip,
+        "user_agent": ua,
+    }
+    signature_ct = _encrypt_json(signature_payload)
+    signature_hash = hashlib.sha256(
+        f"{current['user_id']}|{checksum}|{now.isoformat()}".encode("utf-8")
+    ).hexdigest()
+
+    doc = {
+        "acceptance_id": f"dpa_{uuid.uuid4().hex[:16]}",
+        "user_id": current["user_id"],
+        "email": current.get("email"),
+        "school_id": current.get("school_id"),
+        "school_name": school_name,
+        "doc_id": DPA_DOC_ID,
+        "doc_version": row.get("version"),
+        "doc_checksum": checksum,
+        "accepted_at": now.isoformat(),
+        "signature_ciphertext": signature_ct,
+        "signature_sha256": signature_hash,
+        "ip_hash": hashlib.sha256(ip.encode()).hexdigest() if ip else None,
+    }
+    await db.dpa_acceptances.insert_one(doc)
+    await db.users.update_one(
+        {"user_id": current["user_id"]},
+        {"$set": {
+            "dpa_accepted_at": now.isoformat(),
+            "dpa_accepted_checksum": checksum,
+            "dpa_accepted_version": row.get("version"),
+        }},
+    )
+    return {
+        "accepted": True,
+        "accepted_at": now.isoformat(),
+        "doc_version": row.get("version"),
+        "doc_checksum": checksum,
+        "signature_sha256": signature_hash,
+    }
+
+
+@api_router.get("/owner/dpa/acceptances")
+async def owner_dpa_acceptances(current=Depends(get_current_user)):
+    """Owner-only auditable log of DPA acceptances."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    rows = await db.dpa_acceptances.find({}, {"_id": 0, "signature_ciphertext": 0}).sort("accepted_at", -1).to_list(500)
+    return {"count": len(rows), "acceptances": rows}
+
+
+@api_router.post("/legal/dpa/signed-pdf")
+async def signed_dpa_pdf(payload: dict = None, current=Depends(get_current_user)):
+    """Return a PDF of the DPA signed with the given school name + today's date."""
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+    from reportlab.lib.enums import TA_LEFT
+    from fastapi.responses import StreamingResponse
+
+    payload = payload or {}
+    school_name = (payload.get("school_name") or current.get("name") or "Signing party").strip()
+
+    row = await db.legal_docs.find_one({"doc_id": DPA_DOC_ID})
+    if not row:
+        raise HTTPException(status_code=500, detail="DPA document not initialised")
+    document = _decrypt_json(row["ciphertext"])
+    now = datetime.now(timezone.utc)
+    signature_hash = hashlib.sha256(
+        f"{current['user_id']}|{row.get('checksum')}|{school_name}|{now.isoformat()}".encode("utf-8")
+    ).hexdigest()
+
+    buf = BytesIO()
+    pdf = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Title"], fontSize=16, leading=20, alignment=TA_LEFT)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontSize=12, leading=16, spaceBefore=10, spaceAfter=4)
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontSize=10, leading=14)
+    small = ParagraphStyle("small", parent=styles["BodyText"], fontSize=8, leading=11, textColor="#555555")
+
+    story = []
+    story.append(Paragraph(document["title"], h1))
+    story.append(Spacer(1, 6))
+    story.append(Paragraph(f"Version {document.get('version')} &nbsp;·&nbsp; Effective {document.get('effective_date')}", small))
+    story.append(Spacer(1, 14))
+
+    story.append(Paragraph("Signed for", h2))
+    story.append(Paragraph(f"<b>{school_name}</b>", body))
+    story.append(Paragraph(f"Signed by: {current.get('name') or ''} &lt;{current.get('email') or ''}&gt;", body))
+    story.append(Paragraph(f"Signed on: {now.strftime('%d %B %Y, %H:%M UTC')}", body))
+    story.append(Paragraph(f"Document SHA-256: {row.get('checksum')}", small))
+    story.append(Paragraph(f"Signature SHA-256: {signature_hash}", small))
+    story.append(Spacer(1, 16))
+
+    story.append(Paragraph("Contents", h2))
+    for item in document.get("contents", []):
+        story.append(Paragraph(item, body))
+    story.append(PageBreak())
+
+    for idx, s in enumerate(document.get("sections", []), 1):
+        story.append(Paragraph(f"{idx}. {s['heading']}", h2))
+        story.append(Paragraph(s["body"], body))
+        story.append(Spacer(1, 6))
+
+    story.append(Spacer(1, 20))
+    story.append(Paragraph("---", small))
+    story.append(Paragraph(
+        f"This document was generated by Learnify on behalf of {school_name} and cryptographically bound to DPA document checksum {row.get('checksum')[:16]}… Any modification invalidates the signature.",
+        small,
+    ))
+
+    pdf.build(story)
+    buf.seek(0)
+
+    # Log the download as an acceptance-equivalent (signed record)
+    await db.dpa_acceptances.insert_one({
+        "acceptance_id": f"dpa_pdf_{uuid.uuid4().hex[:16]}",
+        "user_id": current["user_id"],
+        "email": current.get("email"),
+        "school_id": current.get("school_id"),
+        "school_name": school_name,
+        "doc_id": DPA_DOC_ID,
+        "doc_version": row.get("version"),
+        "doc_checksum": row.get("checksum"),
+        "accepted_at": now.isoformat(),
+        "signature_sha256": signature_hash,
+        "kind": "signed_pdf_download",
+    })
+
+    safe_name = re.sub(r"[^A-Za-z0-9_-]+", "_", school_name)[:60] or "school"
+    filename = f"Learnify-DPA-{safe_name}-{now.strftime('%Y%m%d')}.pdf"
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 # ====================== Startup: seed owner & wipe demo users ======================
 
 @app.on_event("startup")
@@ -2128,10 +2319,40 @@ async def startup():
             }}
         )
 
-    # ONE-TIME demo data wipe: keep only the owner. Marker doc ensures it runs once.
+    # Seed/refresh co-owner accounts (idempotent)
+    for co_email, co in CO_OWNERS.items():
+        email_lower = co_email.lower()
+        row = await db.users.find_one({"email": email_lower})
+        if not row:
+            await db.users.insert_one({
+                "user_id": f"owner_{co['username']}",
+                "name": co["name"],
+                "username": co["username"],
+                "email": email_lower,
+                "password_hash": hash_password(co["password"]),
+                "grade_level": "uk_y10",
+                "picture": None,
+                "provider": "email",
+                "role": ROLE_OWNER,
+                "school_id": None,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            logging.info("Seeded co-owner: %s", email_lower)
+        else:
+            await db.users.update_one(
+                {"email": email_lower},
+                {"$set": {
+                    "role": ROLE_OWNER,
+                    "username": co["username"],
+                    "name": co["name"],
+                    "password_hash": hash_password(co["password"]),
+                }}
+            )
+
+    # ONE-TIME demo data wipe: keep only owners. Marker doc ensures it runs once.
     marker = await db.meta.find_one({"key": "wipe_demo_users_v1"})
     if not marker:
-        deleted = await db.users.delete_many({"email": {"$ne": OWNER_EMAIL.lower()}})
+        deleted = await db.users.delete_many({"email": {"$nin": list(OWNER_EMAILS_LOWER)}})
         await db.user_sessions.delete_many({})
         await db.payment_transactions.delete_many({})
         await db.generated_content.delete_many({})

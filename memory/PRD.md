@@ -48,6 +48,26 @@
 - New `/dpa` (alias `/privacy`) page shows the decrypted document with integrity banner + section-by-section rendering.
 - Footer link on every page: "Privacy & DPA".
 
+## Iteration 8 — DPA acceptance gate, signed PDFs, co-owner
+
+### Done
+**Co-owner account**
+- Added `khalida700@hotmail.co.uk` / `August 1979?` as a second `owner` with full admin rights alongside `Yusufm_1`. Idempotent seed on startup; demo-wipe query updated to preserve both owner emails.
+
+**DPA acceptance (encrypted audit log)**
+- `POST /api/legal/dpa/accept` — records `db.dpa_acceptances` doc with SHA-256 signature (`user_id|checksum|timestamp`) and full encrypted signature envelope (`_encrypt_json`) covering email, name, school, IP, UA, doc version + checksum. IP is hashed at rest.
+- `GET /api/legal/dpa/status` — tells the frontend whether the current user has accepted the current DPA version.
+- `GET /api/owner/dpa/acceptances` — owner-only auditable log (Ofsted-grade evidence trail).
+- User doc also stamped with `dpa_accepted_at / _checksum / _version`.
+
+**Blocking gate**
+- `DpaGate` component wraps every `ProtectedRoute` child. If the current user hasn't accepted the current DPA checksum, a full-screen encrypted-legal-document modal blocks all functionality until they click **I Accept** (or Decline & sign out). Login itself is not blocked.
+- Register & School-signup flows require an "I accept the Privacy Policy & DPA" checkbox before submission.
+
+**Signed PDF downloads**
+- `POST /api/legal/dpa/signed-pdf` (auth required) generates a PDF with reportlab, embedding: school name, signer name+email, timestamp, DPA SHA-256 and a bound signature SHA-256 (`user_id|checksum|school|timestamp`). Download logged as a `signed_pdf_download` acceptance kind.
+- New "Download signed PDF" card on `/dpa` for signed-in users.
+
 ### Backlog / next
 - Real WAF + DDoS protection (infra, Cloudflare or similar).
 - Automated daily DB backups (configure MongoDB Atlas backup or scheduled `mongodump`).

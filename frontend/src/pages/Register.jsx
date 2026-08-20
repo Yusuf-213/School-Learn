@@ -12,6 +12,7 @@ export default function Register() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({ email: "", name: "", password: "", grade_level: "uk_y10" });
+  const [acceptPolicy, setAcceptPolicy] = useState(false);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -34,6 +35,7 @@ export default function Register() {
     if (!/[A-Z]/.test(form.password) || !/[a-z]/.test(form.password) || !/\d/.test(form.password) || !/[!@#$%^&*()_+\-={}\[\]:;"'<>,.?/\\|`~]/.test(form.password)) {
       setErr("Password needs upper, lower, a number and a symbol."); return;
     }
+    if (!acceptPolicy) { setErr("You must accept the Privacy Policy & DPA to create an account."); return; }
     setLoading(true);
     try {
       await registerWithEmail(form);
@@ -133,6 +135,20 @@ export default function Register() {
                     onChange={(v) => setForm({ ...form, grade_level: v })}
                     className="mt-2 w-full"
                   />
+                </label>
+                <label className="flex items-start gap-2 text-xs" data-testid="register-accept-policy-row">
+                  <input
+                    type="checkbox"
+                    checked={acceptPolicy}
+                    onChange={(e) => setAcceptPolicy(e.target.checked)}
+                    data-testid="register-accept-policy"
+                    className="mt-0.5"
+                  />
+                  <span>
+                    I accept Learnify's{" "}
+                    <Link to="/dpa" target="_blank" className="underline font-bold">Privacy Policy & Data Processing Agreement</Link>.
+                    An encrypted, timestamped record of my acceptance will be stored.
+                  </span>
                 </label>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setStep(2)} className="brutal-btn bg-white inline-flex items-center gap-2"><ArrowLeft size={16} /> Back</button>
