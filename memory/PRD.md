@@ -86,6 +86,13 @@
 - `signup_school` now calls `resolve_promo_code()` which checks `db.promo_codes` first (respects expiry + `max_uses`) then falls back to `HWA26`. Usage counter increments on redemption.
 - Owner UI has a mint form (code, kind, tier, max uses, expiry, notes) + a live table with an "Enable/Disable" toggle per code.
 
+## Iteration 10 — Tester school account, DPA gate hardening
+
+### Done
+- **Tester account** — `Tester@tester.org` / `123` (username `Tester1`) seeded server-side as a `school_admin` of "Tester Demo Academy" (domain `tester.org`, lifetime School · Medium subscription). Bypasses password policy because it's seeded, not registered. Both login paths (email + username) verified.
+- **DPA Renewal Reminders** — `GET /api/owner/dpa/reminders` returns upcoming (≤30 days from anniversary), stale (accepted an older DPA version) and never_accepted lists. Owner UI shows them at the top of the DPA acceptances tab with per-user `mailto:` templates.
+- **DpaGate fail-closed** — if `GET /legal/dpa/status` errors out, the gate now stays up with a retry button (was previously failing OPEN and could let un-accepted users through on a transient error).
+
 ### Backlog / next
 - Real WAF + DDoS protection (infra, Cloudflare or similar).
 - Automated daily DB backups (configure MongoDB Atlas backup or scheduled `mongodump`).

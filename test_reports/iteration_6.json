@@ -1,0 +1,36 @@
+{
+  "summary": "Full backend + frontend verification of the DPA/legal, promo-code and owner-panel iteration. Backend: 33 pytest cases in /app/backend/tests/test_dpa_promo_iter6.py covering both owner logins (email + username), public DPA doc (v1.1, 14 sections, Fernet ciphertext verified unreadable directly in Mongo), DPA status/accept + DB persistence (dpa_acceptances row with signature_sha256 + encrypted envelope, user row updated), signed PDF (%PDF-, content-disposition Learnify-DPA-<school>-YYYYMMDD, signed_pdf_download audit row), owner acceptances/CSV/reminders (+403 for non-owners), promo CRUD (builtin HWA26 prepended, duplicate/reserved/format/days validation, PATCH disable + 404), school signup with HWA26 and a fresh single-use code (2nd use correctly 400), and /api/owner/stats + /api/owner/schools regression for BOTH owners. Result: 32 passed, 1 skipped (TESTCODE1 already existed from prior run), 0 failed. Frontend: Khalida login -> /dashboard blocked by [data-testid=dpa-gate], accept dismissed it and it did NOT reappear on reload; /owner tabs overview/promo/dpa all render, promo create + toggle work (row promo-row-UITEST1343 with 0/3 uses, DISABLED after toggle), builtin HWA26 row shown without a toggle button, DPA panel shows renewal reminders (2 never-signed) + 7 acceptance rows, Export CSV downloaded learnify-dpa-acceptances-20260820.csv; /dpa public renders 14 sections with no download card when signed out, and signed-in the card downloads Learnify-DPA-UI_Test_School-20260820.pdf. No console errors, no blocked clicks.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/owner/dpa/acceptances.csv", "issue": "CSV emits duplicate data: columns 'name_or_school' and 'school_name' are both populated from r.get('school_name'); the header suggests one should be the user's name (r.get('name')/email owner name)."},
+      {"endpoint": "/api/legal/dpa/accept and /api/legal/dpa/signed-pdf", "issue": "Request body is an untyped `payload: dict = None` instead of a Pydantic model, so school_name length/type is unvalidated (any JSON accepted). Low risk but inconsistent with the rest of the API."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "DPA gate", "issue": "DpaGate fails OPEN: any network/500 error on GET /legal/dpa/status sets status={accepted:true}, so a transient backend failure lets an un-accepted user through the compliance gate. Consider fail-closed with a retry/error state.", "affected_selectors": ["[data-testid=\"dpa-gate\"]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_dpa_promo_iter6.py", "/app/test_reports/pytest/iter6_results.xml"],
+  "action_items": [
+    "Optional: fix duplicate school_name column in the owner DPA CSV export (name_or_school should carry the signer's name).",
+    "Optional: make DpaGate fail-closed (or show a retry) when /legal/dpa/status errors, instead of assuming accepted.",
+    "Optional cleanup: test artefacts left in DB - promo codes TESTCODE1 (disabled), NEWCODE*, UITEST1343 (disabled); test schools test<hex>.sch.uk whose school_admins now appear in DPA 'never signed' reminders."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py is 2653 lines - split into routers (auth, legal_dpa, promo, owner, schools) for maintainability.",
+    "Owner-only guard `if not is_owner(current): raise 403` is duplicated across ~8 endpoints - extract a FastAPI dependency (Depends(require_owner)).",
+    "Passwords for owner/co-owner are re-hashed and overwritten on every startup, so any password change made through the app for these accounts is silently reverted."
+  ],
+  "updated_files": ["/app/backend/tests/test_dpa_promo_iter6.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Created via API: promo codes TESTCODE1 (disabled), NEWCODE<rand>, UITEST1343 (disabled); several TEST_ individual users; 3 TEST schools (test<hex>.sch.uk) used for promo activation checks; DPA acceptance rows for Khalida (TEST Khalida School) and Yusuf (TESTPDFSchool / UI Test School).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Yusufm_1@outlook.com / The_Underdog ; khalida700@hotmail.co.uk / 'August 1979?' - both verified role=owner",
+  "context_for_next_testing_agent": "Khalida has now ACCEPTED DPA v1.1 (during this test run), so her login will no longer show the DPA gate and reminders.stale is now 0. To retest the gate, bump the DPA version/checksum or reset dpa_accepted_* on a user. The 2 'never signed' reminder entries are test school admins I created. Reusable suite: /app/backend/tests/test_dpa_promo_iter6.py (note /api/auth/signup_school requires contact_password, approx_students, students_per_class, class_names - not 'password'/'num_students').",
+  "rca_of_the_issue": "No product defects found. The only 3 initial test failures were my own payload schema mismatch for /api/auth/signup_school (contact_password/approx_students/students_per_class/class_names); corrected in the test file and all pass."
+}

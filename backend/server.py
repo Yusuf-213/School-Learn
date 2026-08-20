@@ -67,6 +67,13 @@ CO_OWNERS = {
 
 OWNER_EMAILS_LOWER = {OWNER_EMAIL.lower(), *(e.lower() for e in CO_OWNERS.keys())}
 
+# Tester demo school + account (bypass password policy — seeded server-side)
+TESTER_EMAIL = "tester@tester.org"
+TESTER_USERNAME = "Tester1"
+TESTER_PASSWORD = "123"
+TESTER_SCHOOL_ID = "school_tester_demo"
+TESTER_SCHOOL_DOMAIN = "tester.org"
+
 client = AsyncIOMotorClient(mongo_url)
 db = client[db_name]
 
@@ -2230,6 +2237,71 @@ async def owner_dpa_acceptances_csv(current=Depends(get_current_user)):
     )
 
 
+@api_router.get("/owner/dpa/reminders")
+async def owner_dpa_reminders(current=Depends(get_current_user)):
+    """Users whose DPA acceptance is due for renewal in ≤30 days OR whose acceptance is on a stale DPA version."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    doc = await db.legal_docs.find_one({"doc_id": DPA_DOC_ID})
+    current_checksum = doc.get("checksum") if doc else None
+    current_version = doc.get("version") if doc else None
+    now = datetime.now(timezone.utc)
+
+    # School admins / owners / teachers are the parties we chase
+    STAFF_ROLES = [ROLE_OWNER, ROLE_SCHOOL_ADMIN, ROLE_TEACHER]
+    users = await db.users.find(
+        {"role": {"$in": STAFF_ROLES}},
+        {"_id": 0, "password_hash": 0}
+    ).to_list(2000)
+
+    upcoming = []
+    stale = []
+    never = []
+    for u in users:
+        accepted_at = u.get("dpa_accepted_at")
+        accepted_checksum = u.get("dpa_accepted_checksum")
+        row = {
+            "user_id": u.get("user_id"),
+            "email": u.get("email"),
+            "name": u.get("name"),
+            "role": u.get("role"),
+            "school_id": u.get("school_id"),
+            "dpa_accepted_at": accepted_at,
+            "dpa_accepted_version": u.get("dpa_accepted_version"),
+        }
+        if not accepted_at:
+            never.append({**row, "reason": "never_accepted"})
+            continue
+        if accepted_checksum and current_checksum and accepted_checksum != current_checksum:
+            stale.append({**row, "reason": "stale_version", "current_version": current_version})
+            continue
+        try:
+            acc_dt = datetime.fromisoformat(accepted_at)
+            if acc_dt.tzinfo is None:
+                acc_dt = acc_dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            continue
+        days_since = (now - acc_dt).days
+        days_until_renewal = 365 - days_since
+        if 0 <= days_until_renewal <= 30:
+            upcoming.append({
+                **row,
+                "reason": "renewal_due",
+                "days_since_acceptance": days_since,
+                "days_until_renewal": days_until_renewal,
+                "renewal_date": (acc_dt + timedelta(days=365)).date().isoformat(),
+            })
+    upcoming.sort(key=lambda r: r["days_until_renewal"])
+    return {
+        "current_version": current_version,
+        "current_checksum": current_checksum,
+        "counts": {"upcoming": len(upcoming), "stale": len(stale), "never": len(never)},
+        "upcoming": upcoming,
+        "stale": stale,
+        "never_accepted": never,
+    }
+
+
 @api_router.post("/legal/dpa/signed-pdf")
 async def signed_dpa_pdf(payload: dict = None, current=Depends(get_current_user)):
     """Return a PDF of the DPA signed with the given school name + today's date."""
@@ -2523,10 +2595,68 @@ async def startup():
                 }}
             )
 
+    # Seed a tester school so the owner can see the school view
+    tester_school = await db.schools.find_one({"school_id": TESTER_SCHOOL_ID})
+    if not tester_school:
+        await db.schools.insert_one({
+            "school_id": TESTER_SCHOOL_ID,
+            "name": "Tester Demo Academy",
+            "email_domain": TESTER_SCHOOL_DOMAIN,
+            "approx_students": 300,
+            "students_per_class": 30,
+            "class_names": ["7A", "7B", "8A", "8B", "9A", "9B", "10A", "11A"],
+            "slt_emails": [],
+            "plan_id": "school_medium",
+            "subscription_tier": "school_medium",
+            "subscription_expires_at": None,
+            "subscription_lifetime": True,
+            "promo_code_applied": "TESTER",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        # Pre-create class shells for realism
+        for cname in ["7A", "7B", "8A", "8B", "9A", "9B", "10A", "11A"]:
+            await db.classes.insert_one({
+                "class_id": f"class_{uuid.uuid4().hex[:10]}",
+                "school_id": TESTER_SCHOOL_ID,
+                "name": cname,
+                "teacher_user_id": None,
+                "student_ids": [],
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+        logging.info("Seeded tester school: %s", TESTER_SCHOOL_ID)
+
+    tester_user = await db.users.find_one({"email": TESTER_EMAIL})
+    tester_doc_base = {
+        "role": ROLE_SCHOOL_ADMIN,
+        "username": TESTER_USERNAME,
+        "name": TESTER_USERNAME,
+        "email": TESTER_EMAIL,
+        "school_id": TESTER_SCHOOL_ID,
+        "grade_level": "uk_y10",
+        "picture": None,
+        "provider": "email",
+        "subscription_tier": "school_medium",
+        "subscription_lifetime": True,
+        "subscription_expires_at": None,
+    }
+    if not tester_user:
+        await db.users.insert_one({
+            "user_id": "user_tester1",
+            **tester_doc_base,
+            "password_hash": hash_password(TESTER_PASSWORD),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
+        logging.info("Seeded tester user: %s (school_admin)", TESTER_EMAIL)
+    else:
+        await db.users.update_one(
+            {"email": TESTER_EMAIL},
+            {"$set": {**tester_doc_base, "password_hash": hash_password(TESTER_PASSWORD)}},
+        )
+
     # ONE-TIME demo data wipe: keep only owners. Marker doc ensures it runs once.
     marker = await db.meta.find_one({"key": "wipe_demo_users_v1"})
     if not marker:
-        deleted = await db.users.delete_many({"email": {"$nin": list(OWNER_EMAILS_LOWER)}})
+        deleted = await db.users.delete_many({"email": {"$nin": [*OWNER_EMAILS_LOWER, TESTER_EMAIL]}})
         await db.user_sessions.delete_many({})
         await db.payment_transactions.delete_many({})
         await db.generated_content.delete_many({})

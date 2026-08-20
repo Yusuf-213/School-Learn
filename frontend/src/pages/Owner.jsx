@@ -348,14 +348,19 @@ function PromoCodesPanel() {
 
 function DpaAcceptancesPanel() {
   const [rows, setRows] = useState([]);
+  const [reminders, setReminders] = useState(null);
   const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
 
   useEffect(() => {
     (async () => {
       try {
-        const { data } = await api.get("/owner/dpa/acceptances");
-        setRows(data.acceptances || []);
+        const [a, r] = await Promise.all([
+          api.get("/owner/dpa/acceptances"),
+          api.get("/owner/dpa/reminders"),
+        ]);
+        setRows(a.data.acceptances || []);
+        setReminders(r.data);
       } catch (e) {
         toast.error(e?.response?.data?.detail || "Could not load acceptances");
       } finally {
@@ -389,6 +394,50 @@ function DpaAcceptancesPanel() {
 
   return (
     <div className="space-y-4" data-testid="dpa-panel">
+      {reminders && (reminders.counts.upcoming + reminders.counts.stale + reminders.counts.never > 0) && (
+        <section className="brutal-card p-5 bg-peach" data-testid="dpa-reminders">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] font-bold">Renewal reminders</div>
+              <h3 className="font-display font-bold text-lg">
+                {reminders.counts.upcoming} due in 30 days · {reminders.counts.stale} on outdated DPA · {reminders.counts.never} never signed
+              </h3>
+              <p className="text-xs text-[#333] mt-1">Current DPA version: <b>{reminders.current_version}</b></p>
+            </div>
+          </div>
+          <div className="mt-3 space-y-2 max-h-64 overflow-y-auto">
+            {reminders.upcoming.map((u) => (
+              <div key={"u-" + u.user_id} className="flex flex-wrap items-center gap-2 text-xs bg-white border-2 border-ink rounded-md p-2" data-testid={`reminder-upcoming-${u.user_id}`}>
+                <span className="font-mono">{u.email}</span>
+                <span className="text-[#4A4A4A]">·</span>
+                <span>{u.role}</span>
+                <span className="ml-auto font-bold">Renews in {u.days_until_renewal}d · {u.renewal_date}</span>
+                <a href={`mailto:${u.email}?subject=Re-accept%20Learnify%20Privacy%20Policy%20%26%20DPA&body=Hi%20${encodeURIComponent(u.name || "")}%2C%0A%0AOur%20Privacy%20Policy%20and%20Data%20Processing%20Agreement%20is%20due%20for%20renewal%20on%20${u.renewal_date}.%20Please%20sign%20in%20to%20Learnify%20and%20re-accept%20the%20latest%20version%20so%20your%20audit%20trail%20stays%20current.%0A%0AThanks.`}
+                  className="brutal-btn bg-ink text-white text-xs">Email</a>
+              </div>
+            ))}
+            {reminders.stale.map((u) => (
+              <div key={"s-" + u.user_id} className="flex flex-wrap items-center gap-2 text-xs bg-white border-2 border-ink rounded-md p-2" data-testid={`reminder-stale-${u.user_id}`}>
+                <span className="font-mono">{u.email}</span>
+                <span className="text-[#4A4A4A]">·</span>
+                <span>{u.role}</span>
+                <span className="ml-auto font-bold">On v{u.dpa_accepted_version} — needs v{u.current_version}</span>
+                <a href={`mailto:${u.email}?subject=Please%20re-accept%20updated%20Privacy%20Policy%20%26%20DPA&body=Hi%20${encodeURIComponent(u.name || "")}%2C%0A%0AWe%27ve%20published%20version%20${u.current_version}%20of%20our%20Privacy%20Policy%20and%20DPA.%20Please%20sign%20in%20to%20Learnify%20and%20accept%20the%20new%20version.`}
+                  className="brutal-btn bg-ink text-white text-xs">Email</a>
+              </div>
+            ))}
+            {reminders.never_accepted.map((u) => (
+              <div key={"n-" + u.user_id} className="flex flex-wrap items-center gap-2 text-xs bg-white border-2 border-ink rounded-md p-2" data-testid={`reminder-never-${u.user_id}`}>
+                <span className="font-mono">{u.email}</span>
+                <span className="text-[#4A4A4A]">·</span>
+                <span>{u.role}</span>
+                <span className="ml-auto font-bold text-red-800">Never signed</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
         <input
           value={q}

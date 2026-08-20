@@ -15,20 +15,27 @@ export default function DpaGate({ children }) {
   const [schoolName, setSchoolName] = useState("");
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState(null);
+  const [statusError, setStatusError] = useState(false);
+
+  const loadStatus = () => {
+    setStatusError(false);
+    api.get("/legal/dpa/status")
+      .then(({ data }) => setStatus(data))
+      .catch(() => setStatusError(true)); // fail-closed: block until we can confirm acceptance
+  };
 
   useEffect(() => {
     if (!user) return;
-    api.get("/legal/dpa/status")
-      .then(({ data }) => setStatus(data))
-      .catch(() => setStatus({ accepted: true })); // fail-open on network hiccup
+    loadStatus();
     api.get("/legal/dpa")
       .then(({ data }) => setDoc(data))
       .catch(() => {});
+     
   }, [user]);
 
   if (!user) return children;
-  if (status === null) return children; // don't block first paint
-  if (status.accepted) return children;
+  if (status === null && !statusError) return children; // don't block first paint
+  if (!statusError && status?.accepted) return children;
 
   const onAccept = async () => {
     setAccepting(true);
@@ -100,6 +107,13 @@ export default function DpaGate({ children }) {
 
           {error && (
             <div className="text-sm text-red-700 border-2 border-red-700 rounded p-2 bg-peach" data-testid="dpa-gate-error">{error}</div>
+          )}
+
+          {statusError && (
+            <div className="text-sm text-red-800 border-2 border-red-800 rounded p-2 bg-peach" data-testid="dpa-gate-status-error">
+              We couldn't confirm your acceptance status. Please retry — for compliance we won't unlock the app until this succeeds.
+              <button onClick={loadStatus} className="ml-2 underline font-bold" data-testid="dpa-gate-retry">Retry</button>
+            </div>
           )}
 
           <div className="flex flex-wrap gap-3 items-center pt-2">
