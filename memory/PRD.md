@@ -103,6 +103,29 @@
 - **Icon compile bug** that broke production deploy fixed: `ExamMulti` → `Exam`, `Pushpin` → `PushPin`, plus a codebase-wide scan confirming every `@phosphor-icons/react` import resolves.
 - **Khalida password** unified to `The_Underdog` (was `August 1979?`) as requested. Both owner logins verified via curl (HTTP 200, role=owner).
 
+## Iteration 12 — Magic-link verify, onboarding tour, class roster
+
+### Done
+**Domain magic-link auto-verify**
+- School signup mints a signed 7-day `verify_token`; response includes `magic_link.url` (built from `PUBLIC_APP_URL`), `expires_at`, `share_with`.
+- New `GET /api/auth/verify_domain?token=<t>` — idempotent: consumes on first call and returns `{verified:true, already_verified:false}`; subsequent calls (StrictMode re-fire, back-navigation) return `{verified:true, already_verified:true, verified_at:<same>}`. Unknown token → 404, expired → 400.
+- Verified school gets `domain_verified_at` + `domain_verified_by` stamped.
+- `/verify-domain` page renders success or error state, with a `useRef` guard against React StrictMode double-invoke.
+- Dashboard shows a `MagicLinkBanner` right after signup (from localStorage) so admins can copy/share the link (with a copy toast).
+
+**3-step Onboarding Tour**
+- `GET/PATCH /api/onboarding/state` (returns merged `{completed, step, dismissed}` defaults so partial rows never break the client).
+- `OnboardingTour` component mounted inside `AppLayout` for all authenticated users; only opens for `school_admin` on their first login. 3 steps (Invite teachers → Set classes → Invite students), progress indicator, Skip/Next/All-done buttons, dismiss persists to backend.
+
+**Class Roster page (/classes)**
+- New endpoints (owner or same-school staff): `GET /api/school/classes` (enriched with `teacher_count`, `student_count`, `school_name`), `GET /api/school/classes/{id}`, `POST /api/school/classes/{id}/teachers|students`, `DELETE .../teachers|students`, `DELETE /api/school/classes/{id}`.
+- `/classes` UI shows a class list on the left (with a "New class" mini-form for staff), and the selected class' Teachers + Students panels with paste-multiple-emails input, per-row Remove, and school-name badge for owners viewing across schools.
+- Sidebar has a new `sn-roster` link pointing at `/classes` for owners/school-admins/teachers.
+
+### Test coverage
+- Backend: 39/39 pytest tests across `test_iter9_magic_onboarding_roster.py` and `test_iter10_fix_verification.py`.
+- Frontend: all targeted flows pass in `iteration_10.json`.
+
 ### Backlog / next
 - Real WAF + DDoS protection (infra, Cloudflare or similar).
 - Automated daily DB backups (configure MongoDB Atlas backup or scheduled `mongodump`).

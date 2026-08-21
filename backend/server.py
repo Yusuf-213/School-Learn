@@ -31,6 +31,7 @@ db_name = os.environ['DB_NAME']
 JWT_SECRET = os.environ['JWT_SECRET']
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', '')
+PUBLIC_APP_URL = os.environ.get('PUBLIC_APP_URL', 'https://school-learn.com').rstrip('/')
 DPA_ENCRYPTION_KEY = os.environ['DPA_ENCRYPTION_KEY']
 _fernet = Fernet(DPA_ENCRYPTION_KEY.encode() if isinstance(DPA_ENCRYPTION_KEY, str) else DPA_ENCRYPTION_KEY)
 MS_CLIENT_ID = os.environ.get('MS_CLIENT_ID', '')
@@ -1383,14 +1384,77 @@ async def signup_school(req: SchoolSignupRequest):
         })
 
     token = make_jwt(user_id)
+
+    # Auto-verification: mint a signed one-time magic link the admin can share with SLT / their IT team
+    # to instantly prove they own @<domain>. No email service required — link is returned in the response
+    # and stored so it can be verified from any browser.
+    verify_token = f"vt_{uuid.uuid4().hex}{uuid.uuid4().hex[:8]}"
+    verify_doc = {
+        "verify_token": verify_token,
+        "school_id": school_id,
+        "email": contact_email,
+        "domain": domain,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(),
+        "used_at": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.domain_verifications.insert_one(verify_doc)
+    magic_url = f"{PUBLIC_APP_URL}/verify-domain?token={verify_token}"
+
     return {
         "token": token,
         "school": {**school_doc},
         "user": {
             "user_id": user_id, "name": req.contact_name, "email": contact_email,
             "role": ROLE_SCHOOL_ADMIN, "school_id": school_id, "grade_level": "uk_y10",
-        }
+        },
+        "magic_link": {
+            "url": magic_url,
+            "expires_at": verify_doc["expires_at"],
+            "share_with": [contact_email, *[e.lower().strip() for e in req.slt_emails if e.strip()]],
+        },
     }
+
+
+@api_router.get("/auth/verify_domain")
+async def verify_domain(token: str):
+    """Consume a one-time magic link and mark the school's admin email + domain as verified.
+    Idempotent: replaying a token that already succeeded for the same school returns 200 with
+    already_verified=true so StrictMode double-fetch / user back-navigation doesn't burn the link."""
+    row = await db.domain_verifications.find_one({"verify_token": token})
+    if not row:
+        raise HTTPException(status_code=404, detail="Invalid or expired link")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    # If already consumed, return the same success payload provided the school is verified.
+    if row.get("used_at"):
+        school = await db.schools.find_one({"school_id": row["school_id"]})
+        if school and school.get("domain_verified_at"):
+            return {
+                "verified": True,
+                "already_verified": True,
+                "school_id": row["school_id"],
+                "email": row["email"],
+                "verified_at": school.get("domain_verified_at") or row["used_at"],
+            }
+        raise HTTPException(status_code=400, detail="This link has already been used")
+    try:
+        exp = datetime.fromisoformat(row["expires_at"])
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="Link expired")
+    except (KeyError, ValueError):
+        pass
+    await db.domain_verifications.update_one({"verify_token": token}, {"$set": {"used_at": now_iso}})
+    await db.schools.update_one(
+        {"school_id": row["school_id"]},
+        {"$set": {"domain_verified_at": now_iso, "domain_verified_by": row["email"]}},
+    )
+    await db.users.update_one(
+        {"email": row["email"]},
+        {"$set": {"email_verified_at": now_iso}},
+    )
+    return {"verified": True, "already_verified": False, "school_id": row["school_id"], "email": row["email"], "verified_at": now_iso}
 
 # ====================== Owner endpoints ======================
 
@@ -1467,6 +1531,148 @@ async def create_class(payload: ClassCreate, current=Depends(get_current_user)):
     await db.classes.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+
+# ---------------- Class roster (school-admin friendly) ----------------
+
+def _require_school_ctx(current, class_row=None):
+    if is_owner(current):
+        return
+    if current.get("role") not in {ROLE_SCHOOL_ADMIN, ROLE_TEACHER}:
+        raise HTTPException(status_code=403, detail="School admin or teacher only")
+    if class_row and current.get("school_id") != class_row.get("school_id"):
+        raise HTTPException(status_code=403, detail="Not your school")
+
+
+@api_router.get("/school/classes")
+async def list_classes(current=Depends(get_current_user)):
+    if is_owner(current):
+        rows = await db.classes.find({}, {"_id": 0}).sort("name", 1).to_list(1000)
+    else:
+        sid = current.get("school_id")
+        if not sid:
+            return {"classes": []}
+        rows = await db.classes.find({"school_id": sid}, {"_id": 0}).sort("name", 1).to_list(500)
+    # enrich with counts + school name so owner rows are distinguishable across schools
+    school_ids = list({r.get("school_id") for r in rows if r.get("school_id")})
+    school_names = {}
+    if school_ids:
+        async for s in db.schools.find({"school_id": {"$in": school_ids}}, {"_id": 0, "school_id": 1, "name": 1}):
+            school_names[s["school_id"]] = s.get("name")
+    for r in rows:
+        r["teacher_count"] = len(r.get("teacher_emails") or [])
+        r["student_count"] = len(r.get("student_emails") or [])
+        r["school_name"] = school_names.get(r.get("school_id"))
+    return {"classes": rows}
+
+
+@api_router.get("/school/classes/{class_id}")
+async def get_class(class_id: str, current=Depends(get_current_user)):
+    row = await db.classes.find_one({"class_id": class_id}, {"_id": 0})
+    if not row:
+        raise HTTPException(status_code=404, detail="Class not found")
+    _require_school_ctx(current, row)
+    return row
+
+
+class ClassRosterAdd(BaseModel):
+    emails: List[str]
+
+
+@api_router.post("/school/classes/{class_id}/teachers")
+async def add_teachers(class_id: str, payload: ClassRosterAdd, current=Depends(get_current_user)):
+    row = await db.classes.find_one({"class_id": class_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Class not found")
+    _require_school_ctx(current, row)
+    cleaned = [e.lower().strip() for e in payload.emails if e.strip()]
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="No emails provided")
+    await db.classes.update_one({"class_id": class_id}, {"$addToSet": {"teacher_emails": {"$each": cleaned}}})
+    updated = await db.classes.find_one({"class_id": class_id}, {"_id": 0})
+    return updated
+
+
+@api_router.post("/school/classes/{class_id}/students")
+async def add_students(class_id: str, payload: ClassRosterAdd, current=Depends(get_current_user)):
+    row = await db.classes.find_one({"class_id": class_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Class not found")
+    _require_school_ctx(current, row)
+    cleaned = [e.lower().strip() for e in payload.emails if e.strip()]
+    if not cleaned:
+        raise HTTPException(status_code=400, detail="No emails provided")
+    await db.classes.update_one({"class_id": class_id}, {"$addToSet": {"student_emails": {"$each": cleaned}}})
+    updated = await db.classes.find_one({"class_id": class_id}, {"_id": 0})
+    return updated
+
+
+class ClassRosterRemove(BaseModel):
+    email: str
+
+
+@api_router.delete("/school/classes/{class_id}/teachers")
+async def remove_teacher(class_id: str, payload: ClassRosterRemove, current=Depends(get_current_user)):
+    row = await db.classes.find_one({"class_id": class_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Class not found")
+    _require_school_ctx(current, row)
+    await db.classes.update_one({"class_id": class_id}, {"$pull": {"teacher_emails": payload.email.lower().strip()}})
+    updated = await db.classes.find_one({"class_id": class_id}, {"_id": 0})
+    return updated
+
+
+@api_router.delete("/school/classes/{class_id}/students")
+async def remove_student(class_id: str, payload: ClassRosterRemove, current=Depends(get_current_user)):
+    row = await db.classes.find_one({"class_id": class_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Class not found")
+    _require_school_ctx(current, row)
+    await db.classes.update_one({"class_id": class_id}, {"$pull": {"student_emails": payload.email.lower().strip()}})
+    updated = await db.classes.find_one({"class_id": class_id}, {"_id": 0})
+    return updated
+
+
+@api_router.delete("/school/classes/{class_id}")
+async def delete_class(class_id: str, current=Depends(get_current_user)):
+    row = await db.classes.find_one({"class_id": class_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Class not found")
+    _require_school_ctx(current, row)
+    await db.classes.delete_one({"class_id": class_id})
+    return {"deleted": True}
+
+
+# ---------------- Onboarding tour state ----------------
+
+@api_router.get("/onboarding/state")
+async def onboarding_state(current=Depends(get_current_user)):
+    row = await db.users.find_one({"user_id": current["user_id"]}, {"_id": 0, "onboarding": 1})
+    stored = (row or {}).get("onboarding") or {}
+    return {"onboarding": {"completed": False, "step": 0, "dismissed": False, **stored}}
+
+
+class OnboardingPatch(BaseModel):
+    step: Optional[int] = None
+    completed: Optional[bool] = None
+    dismissed: Optional[bool] = None
+
+
+@api_router.patch("/onboarding/state")
+async def onboarding_patch(req: OnboardingPatch, current=Depends(get_current_user)):
+    updates = {}
+    if req.step is not None:
+        updates["onboarding.step"] = req.step
+    if req.completed is not None:
+        updates["onboarding.completed"] = req.completed
+        if req.completed:
+            updates["onboarding.completed_at"] = datetime.now(timezone.utc).isoformat()
+    if req.dismissed is not None:
+        updates["onboarding.dismissed"] = req.dismissed
+    if updates:
+        await db.users.update_one({"user_id": current["user_id"]}, {"$set": updates})
+    row = await db.users.find_one({"user_id": current["user_id"]}, {"_id": 0, "onboarding": 1})
+    return {"onboarding": row.get("onboarding") or {}}
 
 # ====================== Teacher: lessons ======================
 

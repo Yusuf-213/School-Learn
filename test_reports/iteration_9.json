@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 9 testing of the 3 new features: domain magic-link auto-verify, 3-step onboarding tour, and /classes roster CRUD. Backend: 23/23 pytest tests pass (login regressions incl. login_username, signup_school magic_link shape + 7-day expiry, verify_domain consume/replay/invalid, onboarding GET/PATCH persistence + auth guard, class roster create/add/remove/delete/dedupe/404/400, access control 403 for cross-school and school-less users, owner sees all schools' classes). Frontend: login, onboarding tour (3 steps -> All done -> does not reappear), sidebar sn-roster link, /classes page full roster CRUD with persistence, school signup wizard -> dashboard magic-link banner (copy + dismiss + persisted dismissal), /verify-domain invalid-token error state all work. ONE HIGH bug found: a VALID magic link renders the error state because the page fires the one-time GET /auth/verify_domain twice (StrictMode double effect) - the first call consumes the token, the second returns 400 'already been used'. Also PUBLIC_APP_URL is unset so the generated link points at https://school-learn.com and is unusable in this environment.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/onboarding/state", "issue": "Returns the raw stored sub-document without merging defaults, so a user with a partial onboarding doc gets e.g. {'step':2,'dismissed':true} with no 'completed' key. Merge with {completed:false, step:0, dismissed:false} so the response shape is stable."},
+      {"endpoint": "POST /api/auth/signup_school", "issue": "PUBLIC_APP_URL is not set in /app/backend/.env, so magic_link.url falls back to https://school-learn.com/verify-domain?token=... which is not this deployment. The link cannot be opened by the admin/SLT in preview (and would break in prod unless that domain is live). Set PUBLIC_APP_URL from env."},
+      {"endpoint": "GET /api/auth/verify_domain", "issue": "Not idempotent: a replay of a token that this same admin already consumed returns 400. Consider returning 200 {verified:true, already_verified:true} when used_at exists and the school is already verified, which also mitigates the double-fetch bug below."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "VerifyDomain.jsx", "issue": "Valid magic link shows [data-testid=verify-error] 'This link has already been used'. Network trace confirms 2 requests to /api/auth/verify_domain on a single page load (React.StrictMode double-invokes the effect); the first consumes the one-time token and the second fails. Guard with a useRef/module-level 'consumed' flag (or make the backend idempotent). This makes the whole magic-link feature unusable end-to-end in the browser.", "selector": "[data-testid=verify-success]", "priority": "HIGH"},
+      {"component": "Dashboard MagicLinkBanner", "issue": "Copy button gives no user feedback (no toast/aria-live) and silently swallows clipboard errors; user cannot tell if the copy worked.", "selector": "[data-testid=signup-magic-link-copy]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Sidebar (all authenticated pages)", "issues": ["A large empty white rectangle renders next to the 'Learnify' logo at top-left on every page (appears to be the accessibility-menu trigger with no visible icon/label) - looks like a broken image/placeholder."]},
+      {"screen": "/classes as owner", "issues": ["Owner sees all 27 classes across every school but rows show only the class name (7A appears 5x, 8x1 appears 6x) with no school name/badge, so classes are indistinguishable and easy to edit on the wrong school."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter9_magic_onboarding_roster.py",
+    "/app/test_reports/pytest/iter9_results.xml"
+  ],
+  "action_items": [
+    "Fix VerifyDomain double-fetch: guard the effect (useRef) so /auth/verify_domain is called once, and/or make the endpoint idempotent for an already-consumed token belonging to an already-verified school.",
+    "Set PUBLIC_APP_URL in backend env so magic_link.url points at the actual app host instead of the https://school-learn.com fallback.",
+    "Merge defaults in GET /api/onboarding/state so completed/step/dismissed are always present.",
+    "Add a toast/aria-live confirmation for the magic-link Copy button.",
+    "Add a school name/badge to class rows on /classes when the viewer is an owner.",
+    "Investigate the blank white box beside the sidebar logo."
+  ],
+  "critical_code_review_comments": [
+    "One-time-token consumption must never happen in a component effect without an idempotency guard - React StrictMode (and any remount/back-navigation) burns the token. This is a functional defect, not just a dev-mode artifact.",
+    "/app/backend/server.py is 2905 lines; the new roster/onboarding/verify routes should be split into routers (e.g. routes/school_classes.py, routes/onboarding.py).",
+    "PUBLIC_APP_URL has a hardcoded fallback default ('https://school-learn.com'); per env rules it should fail fast instead of silently generating unusable links.",
+    "ClassesRoster.jsx sends DELETE with a JSON body; works through the current ingress but is fragile - prefer POST /remove or a query param.",
+    "OnboardingTour skips the API when role != school_admin, so teachers/owners never get any onboarding - confirm that is intended."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter9_magic_onboarding_roster.py"],
+  "success_rate": {"backend": "100% (23/23)", "frontend": "90% (9/10 flows; verify-domain success state fails)"},
+  "seed_data_creation": "Created several TEST_ schools via /auth/signup_school (domains magicverify*/magicwiz*/magicdbl*.co.uk), a couple of TEST_ individual users, and transient TEST_ classes under school_tester_demo (created classes were deleted by the pytest lifecycle test; one TEST_xxxx class created through the UI remains). Tester onboarding state was reset then completed/dismissed during testing.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "/app/memory/test_credentials.md is accurate; owner/co-owner/tester logins all verified working (owner also via username 'Yusufm_1' on /auth/login_username).",
+  "context_for_next_testing_agent": "Backend suite for this iteration: /app/backend/tests/test_iter9_magic_onboarding_roster.py (run with -p no:randomly; the onboarding tests mutate tester@tester.org state - PATCH {step:0,completed:false,dismissed:false} before re-testing the UI tour). To retest /verify-domain success you must mint a FRESH token (POST /api/auth/signup_school with a new plausible .co.uk domain) and check that only ONE request hits /api/auth/verify_domain and [data-testid=verify-success] renders.",
+  "rca_of_the_issue": "VerifyDomain.jsx runs the token-consuming GET inside useEffect with no idempotency guard. Under React.StrictMode (enabled in /app/frontend/src/index.js) the effect runs twice on mount; request #1 sets used_at and request #2 hits the 'This link has already been used' 400 branch, whose response is the one rendered. Verified by counting network requests: 2 calls to /api/auth/verify_domain per page load. Fix on either side (ref guard in the component, or idempotent 200 for an already-consumed token of an already-verified school)."
+}

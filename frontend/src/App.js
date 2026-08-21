@@ -36,6 +36,8 @@ import Practice from "@/pages/Practice";
 import Reports from "@/pages/Reports";
 import Announcements from "@/pages/Announcements";
 import Homework from "@/pages/Homework";
+import ClassesRoster from "@/pages/ClassesRoster";
+import VerifyDomain from "@/pages/VerifyDomain";
 
 function AppRouter() {
   const location = useLocation();
@@ -74,6 +76,8 @@ function AppRouter() {
       <Route path="/practice" element={<ProtectedRoute><Practice /></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
       <Route path="/announcements" element={<ProtectedRoute><Announcements /></ProtectedRoute>} />
+      <Route path="/classes" element={<ProtectedRoute><ClassesRoster /></ProtectedRoute>} />
+      <Route path="/verify-domain" element={<VerifyDomain />} />
       <Route path="*" element={<Landing />} />
     </Routes>
   );

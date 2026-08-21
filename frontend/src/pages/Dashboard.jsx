@@ -5,9 +5,57 @@ import GradeLevelSelect from "@/components/GradeLevelSelect";
 import { SUBJECTS, gradeLevelLabel } from "@/lib/subjects";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { Atom, BookOpen, Bank, Barbell, Function, Sparkle, Timer, ArrowRight, Trophy, Clock } from "@phosphor-icons/react";
+import { Atom, BookOpen, Bank, Barbell, Function, Sparkle, Timer, ArrowRight, Trophy, Clock, Link as LinkIcon, ShieldCheck, X } from "@phosphor-icons/react";
+import { toast } from "sonner";
 
 const iconMap = { Atom, BookOpen, Bank, Barbell, Function };
+
+function MagicLinkBanner() {
+  const [ml, setMl] = useState(null);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("learnify_signup_magic_link");
+      if (raw) setMl(JSON.parse(raw));
+    } catch {}
+  }, []);
+  if (!ml?.url) return null;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(ml.url);
+      toast.success("Verification link copied");
+    } catch {
+      toast.error("Couldn't copy — long-press the field to copy manually");
+    }
+  };
+  const dismiss = () => {
+    localStorage.removeItem("learnify_signup_magic_link");
+    setMl(null);
+  };
+  return (
+    <div className="brutal-card p-5 bg-butter" data-testid="signup-magic-link-banner">
+      <div className="flex items-start gap-3">
+        <ShieldCheck size={24} weight="duotone" />
+        <div className="flex-1 min-w-0">
+          <div className="text-xs uppercase tracking-[0.2em] font-bold mb-1">Verify your school's domain</div>
+          <h3 className="font-display font-bold text-lg">Share this one-time link with your school IT / SLT.</h3>
+          <p className="text-sm mt-1">Anyone who opens it confirms your admin email owns your domain. Link expires {new Date(ml.expires_at).toLocaleDateString()}.</p>
+          <div className="mt-3 flex gap-2 flex-wrap items-center">
+            <input readOnly value={ml.url} className="brutal-input flex-1 min-w-[220px] text-xs font-mono" data-testid="signup-magic-link-url" />
+            <button onClick={copy} className="brutal-btn bg-white hover:bg-mint text-sm inline-flex items-center gap-1" data-testid="signup-magic-link-copy">
+              <LinkIcon size={14} weight="bold" /> Copy link
+            </button>
+            <button onClick={dismiss} className="text-sm underline text-[#4A4A4A]" data-testid="signup-magic-link-dismiss">Dismiss</button>
+          </div>
+          {ml.share_with?.length > 0 && (
+            <p className="text-xs text-[#4A4A4A] mt-2">Send to: {ml.share_with.join(", ")}</p>
+          )}
+        </div>
+        <button onClick={dismiss} aria-label="Close" className="text-ink hover:text-red-800"><X size={16} weight="bold" /></button>
+      </div>
+    </div>
+  );
+}
+
 
 export default function Dashboard() {
   const { user, refreshUser } = useAuth();
@@ -34,6 +82,7 @@ export default function Dashboard() {
   return (
     <AppLayout>
       <div className="max-w-6xl space-y-10">
+        <MagicLinkBanner />
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between gap-4 animate-fade-up">
           <div>

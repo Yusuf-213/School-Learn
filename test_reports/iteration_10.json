@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 10 targeted regression of the 5 iteration_9 fixes. Backend: 16 new pytest cases in test_iter10_fix_verification.py all pass (verify_domain idempotency incl. stable verified_at across 3 calls, 404 unknown/tampered, 400 expired seeded token, PUBLIC_APP_URL magic link, merged /onboarding/state shape after partial PATCH, school_name on /school/classes rows for tester + owner cross-school, roster CRUD + login/promo/DPA guardrails). Existing iter9 suite also re-run: 39/39 pass total. Frontend: /verify-domain with a fresh token shows verify-success on first load AND on reload (StrictMode double-invoke no longer burns the token), bogus token shows verify-error; owner /classes shows correct school-name tag on all sampled rows; Dashboard MagicLinkBanner copy button shows 'Verification link copied' toast and Dismiss works; tester /classes create + roster add still work.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PATCH /api/onboarding/state", "issue": "PATCH response returns the raw stored onboarding doc (row.get('onboarding') or {}) instead of the merged default shape used by GET. Cosmetic inconsistency only - GET is correct; consider reusing the same merge for the PATCH response."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Classes (owner)", "issues": ["School-name tag renders immediately after the class name with no leading space in the DOM text ('10A· TESTER DEMO ACADEMY'); visually fine but consider a space/separator margin for copy/paste and screen readers."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter10_fix_verification.py",
+    "/app/backend/tests/test_iter9_magic_onboarding_roster.py",
+    "/app/test_reports/pytest/iter10_results.xml"
+  ],
+  "action_items": [
+    "Optional: make PATCH /api/onboarding/state return the same merged {completed, step, dismissed} shape as GET."
+  ],
+  "critical_code_review_comments": [
+    "verify_domain replay path correctly falls back to 400 when the token was consumed but the school has no domain_verified_at - good defensive behaviour.",
+    "GET /school/classes issues one extra schools query per request (batched via $in) - fine at current scale; add an index on schools.school_id if class counts grow."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter10_fix_verification.py",
+    "/app/backend/tests/test_iter9_magic_onboarding_roster.py (test_reuse_token_rejected -> test_reuse_token_idempotent, updated for new idempotent 200 contract)",
+    "/app/backend/tests/cleanup_iter10.py"
+  ],
+  "success_rate": {"backend": "100% (39/39)", "frontend": "100% (all targeted flows)"},
+  "seed_data_creation": "Created throwaway schools via /auth/signup_school (TEST_ Iter10 Verify Academy, TEST_ Iter10 FE Academy) and throwaway individual users TEST_ob10_*@gmail.com. TEST_ classes created during UI testing were deleted; tester onboarding state reset to completed/dismissed to avoid the tour overlay blocking future tests.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Owner Yusufm_1@outlook.com / The_Underdog; Co-owner khalida700@hotmail.co.uk / The_Underdog; Tester tester@tester.org / 123",
+  "context_for_next_testing_agent": "All 5 iteration_9 fixes verified working end-to-end. Note: resetting tester onboarding (step 0 / completed false) re-triggers the blocking OnboardingTour overlay ([data-testid=onboarding-tour], z-9998) which intercepts clicks on /classes - always dismiss it ('Skip for now') before UI interactions, or PATCH /onboarding/state {completed:true,dismissed:true} first. Signup emails must use .co.uk/.org.uk (Pydantic EmailStr rejects .test/.example). Expired-token 400 path is only reachable by seeding domain_verifications directly in Mongo (see test_expired_token_400).",
+  "rca_of_the_issue": "No new defects. The only test failure encountered (class-create-btn click timeout on tester /classes) was caused by my own backend test resetting tester onboarding state, which re-opened the OnboardingTour modal overlay - a test-side effect, not an app bug; script updated to dismiss the tour."
+}

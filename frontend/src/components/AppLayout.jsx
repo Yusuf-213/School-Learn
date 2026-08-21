@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import GlobalNav from "@/components/GlobalNav";
 import SideNav, { SideNavMobileTrigger } from "@/components/SideNav";
+import OnboardingTour from "@/components/OnboardingTour";
 
 export default function AppLayout({ children }) {
   const { user } = useAuth();
@@ -34,6 +35,7 @@ export default function AppLayout({ children }) {
         </main>
         <Footer />
       </div>
+      <OnboardingTour />
     </div>
   );
 }

@@ -80,6 +80,10 @@ export default function SchoolSignup() {
       const { data } = await api.post("/auth/signup_school", payload);
       localStorage.setItem("token", data.token);
       setUser(data.user);
+      // Stash the magic verification link so the /dashboard confirmation page can surface it.
+      if (data.magic_link?.url) {
+        try { localStorage.setItem("learnify_signup_magic_link", JSON.stringify(data.magic_link)); } catch {}
+      }
       if (data.school?.promo_code_applied) {
         const msg = data.school.subscription_lifetime
           ? `Promo ${data.school.promo_code_applied} applied — free forever. No payment needed.`

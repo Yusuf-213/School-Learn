@@ -8,7 +8,7 @@ import {
   House, CalendarBlank, BookOpen, ClipboardText, Exam,
   Target, ChartLineUp, FileText, Megaphone, Robot, Crown, Bank, Compass,
   CaretDown, CaretRight, Lock, GraduationCap, X, List, SignOut,
-  ChalkboardTeacher, Timer, Chat, Trophy, CreditCard
+  ChalkboardTeacher, Timer, Chat, Trophy, CreditCard, Users
 } from "@phosphor-icons/react";
 
 const FALLBACK_CLASSES = [
@@ -41,6 +41,7 @@ function buildNav({ user, classes }) {
 
   if (isStaff) {
     items.push({ to: "/teacher", label: "Teach", icon: ChalkboardTeacher, testid: "sn-teacher" });
+    items.push({ to: "/classes", label: "Roster", icon: Users, testid: "sn-roster" });
   }
   items.push({ to: "/focus", label: "Focus mode", icon: Timer, testid: "sn-focus" });
   if (user?.role === "student") {
