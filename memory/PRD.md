@@ -93,6 +93,16 @@
 - **DPA Renewal Reminders** — `GET /api/owner/dpa/reminders` returns upcoming (≤30 days from anniversary), stale (accepted an older DPA version) and never_accepted lists. Owner UI shows them at the top of the DPA acceptances tab with per-user `mailto:` templates.
 - **DpaGate fail-closed** — if `GET /legal/dpa/status` errors out, the gate now stays up with a retry button (was previously failing OPEN and could let un-accepted users through on a transient error).
 
+## Iteration 11 — Sidebar nav + regression sweep
+
+### Done
+- **SideNav** built to match the requested layout (Home, Timetable, Classes with sub-items, Homework, Assessments, Practice, Progress, Reports, Announcements, AI Tutor Support, Teach, Focus, Dreams, Feedback, Plans, plus Owner HQ + Payouts for owners). Parents' Evening and Recordings deliberately excluded per user requirement. Sign-out control docked at bottom; Accessibility menu docked in the header (desktop) and footer (mobile).
+- **New pages**: `/timetable`, `/homework`, `/assessments`, `/practice`, `/reports`, `/announcements` — all wired into the App router, with proper `data-testid` and no dead click targets. Reports button now downloads a stub file or shows a "coming next term" toast so the button is never a no-op.
+- **Class sub-items validated** against `findSubject()` so school class rows like "7A" no longer generate dead `/subjects/7a` links — they fall back to curriculum shortcuts (Maths, English, Biology).
+- **Backend fix**: `GET /api/school/me` returns HTTP 200 `{school:null,classes:[]}` for schoolless users instead of 404 (stopped the sidebar from spamming 404s for owners).
+- **Icon compile bug** that broke production deploy fixed: `ExamMulti` → `Exam`, `Pushpin` → `PushPin`, plus a codebase-wide scan confirming every `@phosphor-icons/react` import resolves.
+- **Khalida password** unified to `The_Underdog` (was `August 1979?`) as requested. Both owner logins verified via curl (HTTP 200, role=owner).
+
 ### Backlog / next
 - Real WAF + DDoS protection (infra, Cloudflare or similar).
 - Automated daily DB backups (configure MongoDB Atlas backup or scheduled `mongodump`).

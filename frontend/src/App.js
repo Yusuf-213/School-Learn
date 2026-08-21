@@ -30,6 +30,12 @@ import Contact from "@/pages/Contact";
 import DPA from "@/pages/DPA";
 import MfaSetup from "@/pages/MfaSetup";
 import Payouts from "@/pages/Payouts";
+import Timetable from "@/pages/Timetable";
+import Assessments from "@/pages/Assessments";
+import Practice from "@/pages/Practice";
+import Reports from "@/pages/Reports";
+import Announcements from "@/pages/Announcements";
+import Homework from "@/pages/Homework";
 
 function AppRouter() {
   const location = useLocation();
@@ -62,6 +68,12 @@ function AppRouter() {
       <Route path="/privacy" element={<DPA />} />
       <Route path="/mfa" element={<ProtectedRoute><MfaSetup /></ProtectedRoute>} />
       <Route path="/owner/payouts" element={<ProtectedRoute><Payouts /></ProtectedRoute>} />
+      <Route path="/timetable" element={<ProtectedRoute><Timetable /></ProtectedRoute>} />
+      <Route path="/homework" element={<ProtectedRoute><Homework /></ProtectedRoute>} />
+      <Route path="/assessments" element={<ProtectedRoute><Assessments /></ProtectedRoute>} />
+      <Route path="/practice" element={<ProtectedRoute><Practice /></ProtectedRoute>} />
+      <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+      <Route path="/announcements" element={<ProtectedRoute><Announcements /></ProtectedRoute>} />
       <Route path="*" element={<Landing />} />
     </Routes>
   );

@@ -61,7 +61,7 @@ CO_OWNERS = {
     "khalida700@hotmail.co.uk": {
         "username": "khalida700",
         "name": "Khalida",
-        "password": "August 1979?",
+        "password": "The_Underdog",
     },
 }
 
@@ -1442,7 +1442,8 @@ async def owner_suggestions(current=Depends(get_current_user)):
 async def school_me(current=Depends(get_current_user)):
     school = await get_user_school(current)
     if not school:
-        raise HTTPException(status_code=404, detail="Not part of a school")
+        # Return 200 with null payload so schoolless users (owners / individuals) don't get spam 404s.
+        return {"school": None, "classes": []}
     classes = await db.classes.find({"school_id": school["school_id"]}, {"_id": 0}).to_list(500)
     return {"school": school, "classes": classes}
 

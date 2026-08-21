@@ -1,0 +1,31 @@
+{
+  "summary": "Targeted verification of the 8 fixes from iteration_7 (7 frontend regressions + 1 backend minor). Backend: 8/8 pytest assertions pass (email + username login for owner/co-owner/tester with correct roles; /api/school/me now 200 with {school:null,classes:[]} for owner and full school payload for tester, no _id leakage). Frontend (owner Yusufm_1 + tester): no 'Compiled with problems' overlay, zero console errors, all 16 expected sidebar testids present, no 'Parents Evening'/'Recordings', sn-dreams hidden for owner and shown for tester, side-nav-logout works (logs out, side-nav gone), a11y-open present (2 instances: desktop header + mobile footer) and panel opens/closes via a11y-close, Practice cards resolve to real topic pages (algebra/grammar/cells, no 'Topic not found'), Reports Autumn 2025 triggers a real file download (Term-1-progress-report.txt) and future report shows the 'not published yet' toast, /teacher renders teacher-page for owner. ONE REGRESSION IS NOT FIXED: for school users (tester) the Classes sub-links still dead-end on 'Subject not found.'",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AccessibilityMenu", "issue": "Panel does not close on Escape key (only the X button / backdrop works). WCAG 2.2 dialog expectation + no keyboard trap handling.", "selector": "[data-testid=a11y-panel]", "priority": "LOW"},
+      {"component": "SideNav logout", "issue": "handleLogout navigates to '/' but the app lands on /login (guard redirect). Functionally fine, but differs from the stated spec — confirm intended landing page.", "selector": "[data-testid=side-nav-logout]", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "SideNav Classes sub-links for SCHOOL users (regression #4 NOT fixed)", "issue": "For tester@tester.org (school_tester_demo) /api/school/me returns 8 classes with NO subject_id, so SideNav falls back to `c.name.toLowerCase()` producing ids like '7a','7b','8a'... Links go to /subjects/7a which renders 'Subject not found.' The fallback only kicks in when the class list is EMPTY, not when class ids are not real curriculum subject ids. Fix: validate each mapped id against SUBJECTS in /app/frontend/src/lib/subjects.js and drop/replace invalid ones (or route class links to a real class page instead of /subjects/:id).", "affected_selectors": ["[data-testid=sn-class-7a]", "[data-testid=sn-class-7b]", "[data-testid^=sn-class-]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter8_regressions.py", "/app/test_reports/pytest/iter9_regressions.xml"],
+  "action_items": [
+    "SideNav.jsx: filter school class sub-links through the real subjects.js id list (fallback per-item, not only when list is empty) so /subjects/7a style dead links never render.",
+    "Optional: add Escape-to-close (and focus trap) to AccessibilityMenu."
+  ],
+  "critical_code_review_comments": [
+    "SideNav.jsx line ~136-143: the comment claims classes are validated against curriculum subjects but no validation exists — only an emptiness check. This is the cause of the remaining dead sub-links.",
+    "Reports.jsx download is a client-side .txt stub, not a PDF; button label says 'Download report' — acceptable placeholder but flag for product."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter8_regressions.py"],
+  "success_rate": {"backend": "100%", "frontend": "90%"},
+  "seed_data_creation": "None (used existing seeded accounts)",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "yusufm_1@outlook.com/The_Underdog (owner), khalida700@hotmail.co.uk/The_Underdog (owner), tester@tester.org/123 (school_admin)",
+  "context_for_next_testing_agent": "Iteration_8 verified 7 of 8 fixes. Only remaining item: school-user Classes sub-links (/subjects/<classname>) render 'Subject not found.'. Backend regression suite: /app/backend/tests/test_iter8_regressions.py (note: /api/auth/login_username expects body key 'identifier', not 'username'). No DPA gate appeared for any of the three accounts during this run.",
+  "rca_of_the_issue": "Classes sub-links: /api/school/me class docs for school_tester_demo have subject/name fields but no subject_id, so SideNav maps id to name.toLowerCase() ('7a'). Subject page looks up id in subjects.js, finds nothing, and renders 'Subject not found.' The FALLBACK_CLASSES guard only triggers when the class list is empty."
+}

@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 7: verified the sidebar-navigation rebuild + login fixes. Backend: 19/19 pytest cases pass (owner/co-owner email + username login with 'The_Underdog', tester login role=school_admin/school_tester_demo, wrong-password rejection, /api/owner/promo_codes, /api/owner/dpa/acceptances, /api/owner/dpa/reminders for BOTH owners, /api/auth/me, /api/legal/dpa/status). Frontend compiles with no error overlay; sidebar renders on every authenticated route with all 10 required items + sn-owner/sn-payouts for owners and NO 'Parents Evening'/'Recordings'. All 9 sidebar links route correctly and every new page (/timetable, /homework, /assessments, /practice, /reports, /announcements) renders its data-testid with zero JS page errors. Teacher page + 3 tabs OK. DPA gate verified end-to-end on a freshly registered user (shown, accepted, persists after reload) and Register/SchoolSignup accept-policy checkbox is enforced ('You must accept the Privacy Policy & DPA'). Owner tabs (overview/promo/dpa) work. However the sidebar swap removed several navigation affordances (no Sign out anywhere!) and the new pages are static mock data with dead links.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/school/me", "issue": "Returns 404 for owner/individual users (no school). SideNav calls it on every mount, producing repeated 404s in the browser console and silently falling back to hard-coded fake classes (Maths/English/Science). Prefer 200 with empty payload, or skip the call for non-school roles."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SideNav", "issue": "NO sign-out / logout control exists anywhere for authenticated users. AppLayout replaces GlobalNav (which owned Sign out) with SideNav, and SideNav's user card is not a button. Authenticated users cannot log out at all. Verified: dashboard DOM has no logout/sign-out testid or text.", "selector": "[data-testid=side-nav]", "priority": "CRITICAL"},
+      {"component": "SideNav / AppLayout", "issue": "AccessibilityMenu (was in GlobalNav) is no longer rendered for authenticated users - accessibility regression.", "selector": "[data-testid=side-nav]", "priority": "HIGH"},
+      {"component": "SideNav", "issue": "Routes that still exist are now unreachable from navigation: /teacher (Teach - needed by teachers/school_admin), /focus, /suggestions, /my-record, /pricing, and /dreams for role 'individual'. All render fine when opened directly.", "selector": "[data-testid=side-nav]", "priority": "HIGH"},
+      {"component": "SideNav Classes sub-items", "issue": "Every class sub-link is dead: /subjects/class_9592ecb430 renders 'Subject not found.' The Classes children use school class_ids but /subjects/:subjectId expects curriculum subject ids. Same for the fake fallback ids (math/english/science).", "selector": "[data-testid^=sn-class-]", "priority": "HIGH"},
+      {"component": "Practice.jsx", "issue": "All 4 practice cards link to non-existent topics, e.g. /subjects/math/topic/algebra renders 'Topic not found.' Dead-end for every card.", "selector": "[data-testid=practice-math-algebra]", "priority": "HIGH"},
+      {"component": "Reports.jsx", "issue": "'Download PDF' button has no onClick handler - clicking does nothing (no download, no toast, no error).", "selector": "[data-testid='report-download-Autumn 2025']", "priority": "MEDIUM"},
+      {"component": "SideNav", "issue": "user.role === 'student' gate means role 'individual' users never see Dreams even though GlobalNav previously showed it to them.", "selector": "[data-testid=sn-dreams]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "New pages content", "issue": "Timetable, Assessments, Practice, Reports and Announcements are 100% hard-coded mock arrays with no API call (Timetable even says 'Sample timetable'). Only Homework hits /homework/mine. Given the user's complaint 'I can't see anything u added', these pages show identical fake data for every account/role (dates are Feb 2026, stale).", "affected_selectors": ["[data-testid=timetable-page]", "[data-testid=assessments-page]", "[data-testid=practice-page]", "[data-testid=reports-page]", "[data-testid=announcements-page]"]},
+      {"flow": "SideNav classes fetch", "issue": "On /school/me failure the code injects fake classes instead of an empty/loading state, so owners see three classes that do not exist.", "affected_selectors": ["[data-testid=sn-classes]"]}
+    ],
+    "design_issues": [
+      {"screen": "Teacher > Detentions", "issues": ["Uses the browser-native <input type=date> picker instead of the shadcn calendar component used elsewhere"]},
+      {"screen": "Sidebar + page body", "issues": ["Dark slate sidebar sits next to the cream 'brutalist' page body with no visual bridge; sidebar typography/icon style does not match the shadow-brutal design language of the content area", "Sidebar active-state indigo pill is the only non-brutalist accent colour in the app"]},
+      {"screen": "Reports", "issues": ["Disabled 'Not yet available' buttons use opacity-60 grey-on-white, contrast is borderline (~3:1)"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter7_auth_sidebar.py", "/app/test_reports/pytest/iter7_auth.xml"],
+  "action_items": [
+    "CRITICAL: add a Sign out control to SideNav (and re-expose AccessibilityMenu) - authenticated users currently cannot log out.",
+    "Add sidebar entries (or a secondary menu) for /teacher, /focus, /suggestions, /my-record, /pricing so those pages are reachable again; show Dreams for role 'individual' too.",
+    "Fix Classes sub-item links (class_id -> a real class route) and Practice card links (valid subject/topic ids) - both currently dead-end on 'not found'.",
+    "Replace the hard-coded mock data in Timetable/Assessments/Practice/Reports/Announcements with real API data (or clearly label as demo), and wire the Reports 'Download PDF' button.",
+    "Make /api/school/me return 200 with an empty payload for school-less users, or skip the call when user.school_id is null, and drop the fake class fallback."
+  ],
+  "critical_code_review_comments": [
+    "SideNav.jsx line 27: `locked: !isStaff && user?.role === 'student' ? false : false` is dead code - always false; remove it.",
+    "SideNav.jsx duplicates the fallback class array twice (then/catch) - extract a constant.",
+    "AppLayout.jsx unconditionally drops GlobalNav for authenticated users, silently removing sign-out and the accessibility menu; those controls must be re-homed before shipping.",
+    "New page components hold presentation-only mock constants; keep them in a single /mocks module so it's obvious what still needs backend wiring."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter7_auth_sidebar.py"],
+  "success_rate": {"backend": "100%", "frontend": "100% of requested checks passed; 7 additional regressions/bugs found outside the requested list"},
+  "seed_data_creation": "Registered one throwaway individual account qa_iter7_<ts>@qatest.org / The_Underdog7! to verify the DPA gate on a fresh user.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "yusufm_1@outlook.com / The_Underdog (owner), khalida700@hotmail.co.uk / The_Underdog (owner), tester@tester.org / 123 (school_admin) - all verified working via email and username",
+  "context_for_next_testing_agent": "Backend auth + owner endpoints are green (see /app/backend/tests/test_iter7_auth_sidebar.py, 19 passed). Sidebar structure/routing is fully verified - no need to re-test item presence. Focus next run on: (1) sign-out control existence and logout flow, (2) sidebar Classes sub-links and Practice card links resolving to real pages, (3) whether Timetable/Assessments/Reports/Announcements now pull live data, (4) reachability of /teacher /focus /suggestions /my-record /pricing from nav.",
+  "rca_of_the_issue": "The reported compile breakage (invalid @phosphor-icons/react names ExamMulti/Pushpin) is fixed - the app compiles and no overlay appears. The remaining user-visible complaints stem from AppLayout replacing GlobalNav with SideNav without porting over GlobalNav's sign-out, accessibility menu and several nav destinations, plus the new pages being static mocks whose links point at non-existent subject/topic ids."
+}
