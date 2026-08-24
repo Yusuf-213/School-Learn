@@ -104,11 +104,10 @@ export default function Dashboard() {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
           <StatCard label="Topics started" value={stats.topics_started} icon={BookOpen} bg="bg-mint" testid="stat-topics-started" />
           <StatCard label="Topics completed" value={stats.topics_completed} icon={Trophy} bg="bg-butter" testid="stat-topics-completed" />
-          <StatCard label="Focus sessions" value={stats.focus_sessions_completed} icon={Timer} bg="bg-lavender" testid="stat-focus-sessions" />
-          <StatCard label="Focus minutes" value={stats.focus_minutes} icon={Clock} bg="bg-peach" testid="stat-focus-minutes" />
+          <StatCard label="Homework set" value={stats.homework_count || 0} icon={Clock} bg="bg-peach" testid="stat-homework-count" />
         </div>
 
         {/* Quick actions */}
@@ -120,10 +119,10 @@ export default function Dashboard() {
             </div>
             <ArrowRight size={28} weight="bold" />
           </Link>
-          <Link to="/focus" className="brutal-card p-6 bg-peach flex items-center justify-between" data-testid="quick-focus-mode">
+          <Link to="/homework" className="brutal-card p-6 bg-peach flex items-center justify-between" data-testid="quick-homework">
             <div>
-              <div className="text-xs tracking-[0.2em] uppercase font-bold mb-2">Lock in</div>
-              <div className="font-display font-bold text-2xl">Focus Mode</div>
+              <div className="text-xs tracking-[0.2em] uppercase font-bold mb-2">Do</div>
+              <div className="font-display font-bold text-2xl">Homework</div>
             </div>
             <ArrowRight size={28} weight="bold" />
           </Link>
