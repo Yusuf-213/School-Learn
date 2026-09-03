@@ -1,0 +1,44 @@
+{
+  "summary": "Backend-only pass (iteration 13) on the SLT management, teacher-only lesson creation, lesson->PPTX export, Yusuf lifetime-pro seed, Stripe checkout regression and a wider regression sweep. 37 pytest cases executed against the public preview URL; 35 passed, 2 failed. Both failures are the same defect class: cross-school authorisation is missing on lesson read/PPTX export. Every requested contract in the review request otherwise behaves exactly as specified (logins/roles, /auth/me pro+lifetime, /api/plans=7, SLT GET/POST/DELETE incl. 403/404/400 edge cases, teacher-only POST /teacher/lessons with school_admin+student 403 and owner bypass 200, PATCH edit + 403 for other teacher, PPTX 200 with correct content-type/disposition/ZIP magic + 404, Stripe checkout returning url+session_id, DPA v2.0 accept, /progress retention_days=30, UK grade validation 400, promo-code CRUD, class roster CRUD). No 500s in backend logs; all test data cleaned up.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/teacher/lessons/{id}/pptx", "issue": "Cross-school data leak: a user whose role is 'teacher' or 'school_admin' in a DIFFERENT school downloads any lesson's PPTX (got 200, expected 403). The guard `not is_owner and role not in {teacher, school_admin} and teacher_user_id != uid` short-circuits on role alone and never compares row['school_id'] with current['school_id'].", "priority": "HIGH"},
+      {"endpoint": "GET /api/teacher/lessons/{id}", "issue": "No authorisation at all — any authenticated user (any school, any role, incl. students) can read any lesson document by id (got 200, expected 403/404). Add owner-or-same-school-or-owning-teacher check.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/school/slt", "issue": "Returns full user documents with only {_id, password_hash} projected out. Any other sensitive field on the user doc (e.g. mfa_secret / mfa_secret_pending set by /auth/mfa/setup, dpa_* envelopes, subscription internals) is exposed to every school_admin. Whitelist fields instead (user_id, name, email, role, grade_level, picture)."},
+      {"endpoint": "POST /api/school/slt", "issue": "Promote only works on users that already exist ('invite them first'). There is no invite endpoint at all, so the user requirement 'invite teachers/students' is not yet satisfied by the backend contract."},
+      {"endpoint": "POST /api/school/slt", "issue": "A school_admin can promote a user of ANY role in their school (including a student) straight to school_admin with no role sanity check; the reverse DELETE always writes role='teacher', so demoting a promoted student silently converts them into a teacher (privilege escalation path within a school)."},
+      {"endpoint": "POST /api/billing/checkout", "issue": "Contract mismatch vs the review request: the request body requires `origin_url` (422 without it) and the `period` field in the request statement is ignored (period comes from PLANS). Works fine when origin_url is supplied — returned a live Stripe URL + session_id."},
+      {"endpoint": "GET /api/school/classes vs /api/teacher/lessons vs /api/school/slt", "issue": "Inconsistent list envelope keys ('classes' vs 'items' vs named arrays) — cost extra frontend/test churn."},
+      {"endpoint": "DELETE /api/school/slt, DELETE /api/school/classes/{id}/teachers", "issue": "DELETE with a required JSON body — legal but some proxies/fetch wrappers strip DELETE bodies; consider POST /school/slt/demote or a query/path param."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter13_slt_pptx.py",
+    "/app/test_reports/pytest/iter13.xml"
+  ],
+  "action_items": [
+    "Add school scoping to GET /api/teacher/lessons/{id}/pptx: allow owner, the owning teacher, or staff (teacher/school_admin) whose school_id == lesson.school_id; otherwise 403.",
+    "Add an authorisation check to GET /api/teacher/lessons/{id} (currently completely open to any authenticated user).",
+    "Whitelist the fields returned by GET /api/school/slt so mfa_secret / dpa_* / subscription internals are never returned.",
+    "Decide + implement the 'invite teachers/students' endpoint (requirement b) — POST /api/school/invite creating a pending user with role teacher|student scoped to the school.",
+    "Guard POST /api/school/slt so only teachers (not students) can be promoted, and record the previous role so DELETE restores it instead of hardcoding 'teacher'.",
+    "Optional: give POST /api/billing/checkout an origin_url default (or document it) so the documented {plan_id, period} payload doesn't 422."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 3110 lines — split into routers (auth, school, teacher, billing, legal) before it becomes unmaintainable.",
+    "lesson_pptx() does heavy local imports (pptx, StreamingResponse, BytesIO) inside the handler and builds the deck synchronously in the event loop; move imports to module scope and consider run_in_threadpool for large decks.",
+    "PPTX generation silently produces a 1-slide title-only deck when lesson.plan is None (use_ai=false). Consider 422/400 or a clear 'no plan yet' slide so teachers aren't confused by an empty download.",
+    "_require_slt() treats is_owner OR school_admin as SLT but the downstream handlers then re-derive school scope differently — centralise a single school-scope helper (like _require_school_ctx already used for classes) and reuse it for lessons + SLT."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter13_slt_pptx.py"],
+  "success_rate": {"backend": "94.6% (35/37 pytest cases)", "frontend": "not tested (backend-only pass as requested)"},
+  "seed_data_creation": "Throwaway accounts test_*@qa-iter13.co.uk (teacherA, teacherB, outsider teacher, outsider student) inserted via public register + direct mongo role/school patch; 2 TEST_ lessons; 1 TESTQA13* promo code; 1 TEST_QA13 class. All deleted in the session-scoped cleanup fixture (verified 0 leftovers in mongo).",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "owner yusufm_1@outlook.com/The_Underdog, co-owner khalida700@hotmail.co.uk/The_Underdog, school_admin tester@tester.org/123 — all verified working with correct roles.",
+  "context_for_next_testing_agent": "Run `python -m pytest tests/test_iter13_slt_pptx.py -v` from /app/backend. The 2 expected-to-fail tests are test_pptx_cross_school_teacher_should_be_403 and test_get_lesson_cross_school_should_be_403 — they assert the CORRECT behaviour, so they should go green once the main agent adds school scoping. Notes: (1) EmailStr rejects .test TLDs, use *.co.uk for throwaway emails; (2) /api/school/classes returns key 'classes' not 'items'; roster add takes {emails:[...]} and remove takes {email:'...'}; (3) billing/checkout requires origin_url; (4) all lesson tests use use_ai=false so no Anthropic spend — keep it that way; (5) teacher accounts are made by registering then patching db.users role/school_id directly since no public API sets role=teacher.",
+  "rca_of_the_issue": "In server.py lesson_pptx() (line ~1759) the permission expression is `if not is_owner(current) and current.get('role') not in {ROLE_TEACHER, ROLE_SCHOOL_ADMIN} and row.get('teacher_user_id') != current['user_id']`. Because the conditions are AND-ed, merely holding the teacher/school_admin role anywhere in the platform satisfies the check, so a teacher in school_other_qa downloaded a lesson owned by a teacher in school_tester_demo (reproduced: register user -> set role='teacher', school_id='school_other_qa' -> GET /api/teacher/lessons/{other_school_lesson}/pptx -> 200 + valid PPTX). get_lesson() has no check whatsoever. Fix: compare row['school_id'] to current['school_id'] and require ownership for non-staff."
+}

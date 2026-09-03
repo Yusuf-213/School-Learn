@@ -1,13 +1,12 @@
-import { gradeLevelsGrouped } from "@/lib/subjects";
+import { gradeLevelsGrouped, GRADE_LEVELS } from "@/lib/subjects";
 
 export default function GradeLevelSelect({ value, onChange, className = "", testId, ...rest }) {
   const groups = gradeLevelsGrouped();
-  const order = [
-    "Early years", "Generic / ISCED",
-    "United Kingdom", "United States", "Canada", "Australia",
-    "Germany", "Japan", "China",
-    "Other", "University",
-  ];
+  // Derive order from GRADE_LEVELS so it can never drift out of sync with the taxonomy.
+  const order = [];
+  for (const g of GRADE_LEVELS) {
+    if (!order.includes(g.group)) order.push(g.group);
+  }
   return (
     <select
       data-testid={testId}

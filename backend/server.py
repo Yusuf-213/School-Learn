@@ -92,8 +92,9 @@ ROLE_OWNER = "owner"
 ROLE_SCHOOL_ADMIN = "school_admin"
 ROLE_TEACHER = "teacher"
 ROLE_STUDENT = "student"
+ROLE_PARENT = "parent"
 ROLE_INDIVIDUAL = "individual"
-ALL_ROLES = {ROLE_OWNER, ROLE_SCHOOL_ADMIN, ROLE_TEACHER, ROLE_STUDENT, ROLE_INDIVIDUAL}
+ALL_ROLES = {ROLE_OWNER, ROLE_SCHOOL_ADMIN, ROLE_TEACHER, ROLE_STUDENT, ROLE_PARENT, ROLE_INDIVIDUAL}
 
 def is_owner(user: dict) -> bool:
     return user and (user.get("role") == ROLE_OWNER or user.get("email", "").lower() in OWNER_EMAILS_LOWER)
@@ -104,7 +105,7 @@ class RegisterRequest(BaseModel):
     name: str
     email: EmailStr
     password: str
-    grade_level: Optional[str] = "high_school"
+    grade_level: Optional[str] = "uk_y10"
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -118,7 +119,7 @@ class UserOut(BaseModel):
     name: str
     email: str
     picture: Optional[str] = None
-    grade_level: Optional[str] = "high_school"
+    grade_level: Optional[str] = "uk_y10"
     provider: str = "email"
 
 class AIGenerateRequest(BaseModel):
@@ -322,7 +323,7 @@ async def register(req: RegisterRequest):
         "name": req.name,
         "email": req.email.lower(),
         "password_hash": hash_password(req.password),
-        "grade_level": req.grade_level or "uk_y10",
+        "grade_level": normalize_grade_level(req.grade_level),
         "picture": None,
         "provider": "email",
         "role": ROLE_INDIVIDUAL,
@@ -392,7 +393,7 @@ async def google_session(req: GoogleSessionRequest, response: Response):
             "email": email,
             "picture": data.get("picture"),
             "password_hash": None,
-            "grade_level": "high_school",
+            "grade_level": "uk_y10",
             "provider": "google",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -435,7 +436,7 @@ async def google_session(req: GoogleSessionRequest, response: Response):
             "name": user.get("name"),
             "email": user["email"],
             "picture": user.get("picture"),
-            "grade_level": user.get("grade_level", "high_school"),
+            "grade_level": user.get("grade_level", "uk_y10"),
             "provider": "google",
         }
     }
@@ -477,6 +478,8 @@ async def logout(response: Response, request: Request,
 @api_router.patch("/auth/profile")
 async def update_profile(payload: dict, current=Depends(get_current_user)):
     allowed = {k: v for k, v in payload.items() if k in {"name", "grade_level"}}
+    if "grade_level" in allowed:
+        allowed["grade_level"] = normalize_grade_level(allowed["grade_level"])
     if allowed:
         await db.users.update_one({"user_id": current["user_id"]}, {"$set": allowed})
     user = await db.users.find_one({"user_id": current["user_id"]}, {"_id": 0, "password_hash": 0})
@@ -484,57 +487,61 @@ async def update_profile(payload: dict, current=Depends(get_current_user)):
 
 # ====================== AI Content Generation ======================
 
+# UK-only grade-level authoritative allow-list (mirrors GRADE_LEVELS in frontend/src/lib/subjects.js).
+UK_GRADE_LEVELS = {
+    "uk_reception", "uk_y1", "uk_y2", "uk_y3", "uk_y4", "uk_y5", "uk_y6",
+    "uk_y7", "uk_y8", "uk_y9", "uk_y10", "uk_y11", "uk_y12", "uk_y13",
+    "uk_undergrad", "uk_masters", "uk_doctoral",
+}
+
+
+def normalize_grade_level(value: Optional[str]) -> str:
+    v = (value or "").strip().lower()
+    if v in UK_GRADE_LEVELS:
+        return v
+    # legacy → closest UK equivalent so existing accounts don't break
+    legacy_map = {"high_school": "uk_y10", "middle_school": "uk_y8",
+                  "undergrad": "uk_undergrad", "grad": "uk_masters", "phd": "uk_doctoral"}
+    if v in legacy_map:
+        return legacy_map[v]
+    if v:
+        raise HTTPException(status_code=400, detail=f"Unsupported grade_level '{value}' — must be one of the UK levels")
+    return "uk_y10"
+
+
+
 def _grade_descriptor(grade_level: str) -> str:
     grade_map = {
-        # universal
-        "preschool":        "preschool (ages 3-5), use very simple words, fun analogies and concrete examples",
-        "elementary":       "elementary school (ages 6-10), simple language with relatable examples",
-        # ISCED
-        "lower_secondary":  "lower secondary (ages 11-15), clear and engaging with real-world examples (ISCED 2)",
-        "upper_secondary":  "upper secondary (ages 15-18), rigorous but accessible; include key terminology (ISCED 3)",
-        # UK
+        # UK Primary — EYFS / KS1 / KS2
+        "uk_reception":     "UK Reception (EYFS, age 4-5) — very simple words, fun analogies, concrete examples",
+        "uk_y1":            "UK Year 1 (KS1, age 5-6) — phonics, counting, sentence-level basics with pictures and short words",
+        "uk_y2":            "UK Year 2 (KS1, age 6-7) — end-of-KS1 SATs level, simple times tables, short paragraphs",
+        "uk_y3":            "UK Year 3 (KS2, age 7-8) — early KS2 vocabulary, times tables to 8×, structured sentences",
+        "uk_y4":            "UK Year 4 (KS2, age 8-9) — multiplication check, fractions, non-fiction writing",
+        "uk_y5":            "UK Year 5 (KS2, age 9-10) — pre-SATs KS2 depth, decimals, extended writing",
+        "uk_y6":            "UK Year 6 (KS2, age 10-11) — KS2 SATs level, formal grammar, arithmetic + reasoning",
+        # UK KS3
         "uk_y7":            "UK Year 7 (KS3, age 11-12) — accessible introduction with everyday examples",
         "uk_y8":            "UK Year 8 (KS3, age 12-13) — build on KS3 fundamentals",
         "uk_y9":            "UK Year 9 (KS3, age 13-14) — bridge to GCSE-level work",
+        # UK GCSE
         "uk_y10":           "UK Year 10 (GCSE, age 14-15) — GCSE specification depth and exam terminology",
         "uk_y11":           "UK Year 11 (GCSE, age 15-16) — final-GCSE depth, exam-style precision",
+        # UK Sixth Form / A-Level
         "uk_y12":           "UK Year 12 (AS / Lower 6th, age 16-17) — A-Level introduction",
         "uk_y13":           "UK Year 13 (A2 / Upper 6th, age 17-18) — full A-Level depth and rigour",
-        # US
-        "us_g9":            "US Grade 9 (Freshman, age 14-15) — high-school introduction",
-        "us_g10":           "US Grade 10 (Sophomore, age 15-16)",
-        "us_g11":           "US Grade 11 (Junior, age 16-17) — Common Core / AP-prep depth",
-        "us_g12":           "US Grade 12 (Senior, age 17-18) — Honors/AP-level rigour",
-        # Canada
-        "ca_g9":            "Canada Grade 9 (age 14-15)",
-        "ca_g10":           "Canada Grade 10 (age 15-16)",
-        "ca_g11":           "Canada Grade 11 (age 16-17)",
-        "ca_g12":           "Canada Grade 12 (age 17-18) — university-prep depth",
-        # Australia
-        "au_y7":            "Australian Year 7 (age 12-13)",
-        "au_y8":            "Australian Year 8 (age 13-14)",
-        "au_y9":            "Australian Year 9 (age 14-15)",
-        "au_y10":           "Australian Year 10 (age 15-16)",
-        "au_y11":           "Australian Year 11 (age 16-17) — VCE/HSC/QCE preliminary",
-        "au_y12":           "Australian Year 12 (age 17-18) — VCE/HSC/QCE final-year depth",
-        # Germany
-        "de_sek1":          "German Sekundarstufe I (Klasse 5-10, age 10-15) — Hauptschule/Realschule/Gymnasium I",
-        "de_sek2":          "German Sekundarstufe II (Klasse 11-13, age 15-19) — Gymnasium II / Abitur-prep",
-        # Japan
-        "jp_jhs":           "Japanese Junior High 中学校 (age 12-15)",
-        "jp_shs":           "Japanese Senior High 高校 (age 15-18)",
-        # China
-        "cn_jhs":           "Chinese Junior High 初中 (age 12-15)",
-        "cn_shs":           "Chinese Senior High 高中 (age 15-18) — Gaokao-track rigour",
-        # legacy
-        "middle_school":    "middle school (ages 11-13), clear and engaging with real-world examples",
-        "high_school":      "high school (ages 14-18), rigorous but accessible, include key terminology",
-        # higher ed
-        "undergrad":        "undergraduate university level, academic tone with proper terminology and depth",
-        "grad":             "university master's level, advanced concepts and nuanced analysis",
-        "phd":              "university doctoral level, scholarly tone, cite frameworks and current research directions",
+        # UK University
+        "uk_undergrad":     "UK university undergraduate level, academic tone with proper terminology and depth",
+        "uk_masters":       "UK university master's level, advanced concepts and nuanced analysis",
+        "uk_doctoral":      "UK doctoral / research level, scholarly tone, cite frameworks and current research directions",
+        # legacy aliases so old accounts don't break
+        "high_school":      "UK Year 10-11 (GCSE) equivalent, rigorous but accessible, include key terminology",
+        "middle_school":    "UK Year 7-9 (KS3) equivalent, clear and engaging with real-world examples",
+        "undergrad":        "UK university undergraduate level, academic tone with proper terminology and depth",
+        "grad":             "UK university master's level, advanced concepts and nuanced analysis",
+        "phd":              "UK doctoral / research level, scholarly tone, cite frameworks and current research directions",
     }
-    return grade_map.get(grade_level, grade_map["high_school"])
+    return grade_map.get(grade_level, grade_map["uk_y10"])
 
 def build_prompt(content_type: str, subject: str, topic: str, sub_topic: Optional[str], grade_level: str) -> tuple[str, str]:
     target = f"{topic}" + (f" — {sub_topic}" if sub_topic else "")
@@ -579,49 +586,36 @@ def build_paper_prompt(subject: str, topic: str, sub_topic: Optional[str], grade
     target = f"{topic}" + (f" — {sub_topic}" if sub_topic else "")
     board = (exam_board or "generic").lower()
     board_label = {
-        "aqa": "AQA (UK)", "edexcel": "Edexcel (UK)", "ocr": "OCR (UK)",
-        "ib": "International Baccalaureate", "cie": "Cambridge International (CIE)",
+        "aqa": "AQA", "edexcel": "Edexcel / Pearson", "ocr": "OCR",
+        "wjec": "WJEC / Eduqas", "cie": "Cambridge International (CIE)",
         "generic": "a generic mock exam",
     }.get(board, "a generic mock exam")
     paper_level_map = {
-        "preschool": "preschool worksheets (pictures + tracing)",
-        "elementary": "elementary-level worksheet",
-        "lower_secondary": "lower-secondary assessment (ISCED 2)",
-        "upper_secondary": "upper-secondary exam paper (ISCED 3)",
-        "uk_y7": "UK Year 7 KS3 assessment",
-        "uk_y8": "UK Year 8 KS3 assessment",
-        "uk_y9": "UK Year 9 KS3 assessment",
-        "uk_y10": "UK Year 10 GCSE-style paper",
-        "uk_y11": "UK Year 11 GCSE final-style paper",
-        "uk_y12": "UK Year 12 AS-Level paper",
-        "uk_y13": "UK Year 13 A-Level paper",
-        "us_g9": "US Grade 9 assessment",
-        "us_g10": "US Grade 10 assessment",
-        "us_g11": "US Grade 11 / SAT-prep paper",
-        "us_g12": "US Grade 12 AP-style paper",
-        "ca_g9": "Canada Grade 9 assessment",
-        "ca_g10": "Canada Grade 10 assessment",
-        "ca_g11": "Canada Grade 11 assessment",
-        "ca_g12": "Canada Grade 12 / provincial exam",
-        "au_y7": "Australian Year 7 assessment",
-        "au_y8": "Australian Year 8 assessment",
-        "au_y9": "Australian Year 9 assessment",
-        "au_y10": "Australian Year 10 assessment",
-        "au_y11": "Australian Year 11 VCE/HSC paper",
-        "au_y12": "Australian Year 12 VCE/HSC/QCE final paper",
-        "de_sek1": "German Sekundarstufe I Klassenarbeit",
-        "de_sek2": "German Sekundarstufe II Klausur (Abitur-style)",
-        "jp_jhs": "Japanese 中学校 assessment",
-        "jp_shs": "Japanese 高校 paper",
-        "cn_jhs": "Chinese 初中 assessment",
-        "cn_shs": "Chinese 高中 Gaokao-style paper",
-        "middle_school": "middle-school assessment",
-        "high_school": "high-school exam paper",
-        "undergrad": "undergraduate exam paper",
-        "grad": "graduate-level exam paper",
-        "phd": "PhD-style qualifying exam",
+        "uk_reception":     "UK Reception (EYFS) picture worksheet",
+        "uk_y1":            "UK Year 1 (KS1) worksheet — pictures, tracing, short answers",
+        "uk_y2":            "UK Year 2 (KS1) SATs-style short paper",
+        "uk_y3":            "UK Year 3 (KS2) worksheet",
+        "uk_y4":            "UK Year 4 (KS2) multiplication + reasoning paper",
+        "uk_y5":            "UK Year 5 (KS2) paper",
+        "uk_y6":            "UK Year 6 (KS2) SATs-style paper",
+        "uk_y7":            "UK Year 7 KS3 assessment",
+        "uk_y8":            "UK Year 8 KS3 assessment",
+        "uk_y9":            "UK Year 9 KS3 assessment",
+        "uk_y10":           "UK Year 10 GCSE-style paper",
+        "uk_y11":           "UK Year 11 GCSE final-style paper",
+        "uk_y12":           "UK Year 12 AS-Level paper",
+        "uk_y13":           "UK Year 13 A-Level paper",
+        "uk_undergrad":     "UK undergraduate exam paper",
+        "uk_masters":       "UK master's-level exam paper",
+        "uk_doctoral":      "UK doctoral qualifying exam / research prompt",
+        # legacy fallbacks
+        "middle_school":    "UK KS3-equivalent assessment",
+        "high_school":      "UK GCSE-style paper",
+        "undergrad":        "UK undergraduate exam paper",
+        "grad":             "UK master's-level exam paper",
+        "phd":              "UK doctoral qualifying exam / research prompt",
     }
-    paper_level = paper_level_map.get(grade_level, paper_level_map["high_school"])
+    paper_level = paper_level_map.get(grade_level, paper_level_map["uk_y10"])
     system = (
         f"You are an expert examiner writing realistic practice papers for {subject}, "
         f"styled like {board_label}. Be rigorous and authentic to the exam style."
@@ -954,10 +948,12 @@ async def upsert_progress(req: ProgressUpdate, current=Depends(get_current_user)
 
 @api_router.get("/progress")
 async def list_progress(current=Depends(get_current_user)):
+    # Section 11 of the DPA: any progress record older than 30 days is wiped on read.
+    await _prune_stale_progress(current["user_id"])
     items = await db.progress.find(
         {"user_id": current["user_id"]}, {"_id": 0}
     ).sort("updated_at", -1).to_list(200)
-    return {"items": items}
+    return {"items": items, "retention_days": PROGRESS_RETENTION_DAYS}
 
 # ====================== Stats ======================
 
@@ -1145,7 +1141,7 @@ async def microsoft_auth(req: MicrosoftAuthRequest):
             "email": email,
             "picture": None,
             "password_hash": None,
-            "grade_level": "high_school",
+            "grade_level": "uk_y10",
             "provider": "microsoft",
             "created_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -1159,7 +1155,7 @@ async def microsoft_auth(req: MicrosoftAuthRequest):
             "name": user.get("name"),
             "email": user["email"],
             "picture": user.get("picture"),
-            "grade_level": user.get("grade_level", "high_school"),
+            "grade_level": user.get("grade_level", "uk_y10"),
             "provider": "microsoft",
         },
     }
@@ -1677,7 +1673,8 @@ async def onboarding_patch(req: OnboardingPatch, current=Depends(get_current_use
 # ====================== Teacher: lessons ======================
 
 @api_router.post("/teacher/lessons")
-async def create_lesson(req: LessonCreate, current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+async def create_lesson(req: LessonCreate, current=Depends(require_authed_role(ROLE_TEACHER))):
+    """Only teachers (and owner via bypass) may plan lessons — school admins are SLT-managers, not planners."""
     lesson_id = f"lesson_{uuid.uuid4().hex[:10]}"
     plan_json = None
 
@@ -1726,15 +1723,199 @@ async def create_lesson(req: LessonCreate, current=Depends(require_authed_role(R
 
 @api_router.get("/teacher/lessons")
 async def list_lessons(current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
-    q = {} if is_owner(current) else {"teacher_user_id": current["user_id"]}
+    q = {} if is_owner(current) else ({"school_id": current.get("school_id")} if current.get("role") == ROLE_SCHOOL_ADMIN else {"teacher_user_id": current["user_id"]})
     items = await db.lessons.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
     return {"items": items}
+
+
+class LessonEdit(BaseModel):
+    plan: dict
+
+
+@api_router.patch("/teacher/lessons/{lesson_id}")
+async def edit_lesson(lesson_id: str, req: LessonEdit, current=Depends(require_authed_role(ROLE_TEACHER))):
+    row = await db.lessons.find_one({"lesson_id": lesson_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    if not is_owner(current) and row.get("teacher_user_id") != current["user_id"]:
+        raise HTTPException(status_code=403, detail="Not your lesson")
+    await db.lessons.update_one({"lesson_id": lesson_id}, {"$set": {
+        "plan": req.plan,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }})
+    return await db.lessons.find_one({"lesson_id": lesson_id}, {"_id": 0})
+
+
+def _require_lesson_read(current: dict, row: dict):
+    if is_owner(current):
+        return
+    if row.get("teacher_user_id") == current["user_id"]:
+        return
+    if current.get("role") in {ROLE_TEACHER, ROLE_SCHOOL_ADMIN} and row.get("school_id") == current.get("school_id"):
+        return
+    raise HTTPException(status_code=403, detail="Not permitted")
+
+
+@api_router.get("/teacher/lessons/{lesson_id}/pptx")
+async def lesson_pptx(lesson_id: str, current=Depends(get_current_user)):
+    """Turn any lesson plan into an editable PowerPoint that the teacher can keep tweaking."""
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+
+    row = await db.lessons.find_one({"lesson_id": lesson_id}, {"_id": 0})
+    if not row:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    _require_lesson_read(current, row)
+
+    plan = row.get("plan") or {}
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+
+    def add_slide(title: str, bullets: List[str] = None, notes: str = ""):
+        blank = prs.slide_layouts[5]
+        s = prs.slides.add_slide(blank)
+        title_shape = s.shapes.title
+        title_shape.text = title
+        for p in title_shape.text_frame.paragraphs:
+            for r in p.runs:
+                r.font.size = Pt(36)
+                r.font.bold = True
+        if bullets:
+            box = s.shapes.add_textbox(Inches(0.6), Inches(1.6), Inches(12), Inches(5.5))
+            tf = box.text_frame
+            tf.word_wrap = True
+            for i, b in enumerate(bullets):
+                para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+                para.text = b
+                para.level = 0
+                for r in para.runs:
+                    r.font.size = Pt(22)
+        if notes:
+            s.notes_slide.notes_text_frame.text = notes
+
+    # Title slide
+    add_slide(plan.get("title") or row.get("title") or "Lesson", [
+        row.get("subject", ""),
+        row.get("year_group", ""),
+        f"{row.get('duration_minutes', 0)} minutes",
+        f"Teacher: {current.get('name', '')}",
+    ])
+    # Objectives
+    if plan.get("objectives"):
+        add_slide("Learning objectives", plan["objectives"])
+    # Starter
+    if plan.get("starter"):
+        st = plan["starter"]
+        add_slide(f"Starter · {st.get('duration_min', 0)} min", [st.get("activity", "")])
+    # Main activities
+    for i, m in enumerate(plan.get("main") or [], 1):
+        add_slide(f"Main activity {i} · {m.get('duration_min', 0)} min",
+                  [m.get("activity", ""), *(m.get("resources") or [])],
+                  notes=m.get("teacher_notes", ""))
+    # Plenary
+    if plan.get("plenary"):
+        pl = plan["plenary"]
+        add_slide(f"Plenary · {pl.get('duration_min', 0)} min", [pl.get("activity", "")])
+    # Differentiation
+    diff = plan.get("differentiation") or {}
+    if diff:
+        add_slide("Differentiation", [f"Support: {diff.get('support', '')}", f"Stretch: {diff.get('stretch', '')}"])
+    # Success + homework
+    if plan.get("success_criteria"):
+        add_slide("Success criteria", plan["success_criteria"])
+    if plan.get("homework"):
+        add_slide("Homework", [plan["homework"]])
+
+    buf = BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", row.get("title") or "lesson")[:60]
+    filename = f"Learnify-{safe}-{datetime.now(timezone.utc).strftime('%Y%m%d')}.pptx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ====================== SLT (Senior Leadership Team) management ======================
+
+class SltMemberChange(BaseModel):
+    email: str
+
+
+def _require_slt(current: dict):
+    if is_owner(current) or current.get("role") == ROLE_SCHOOL_ADMIN:
+        return
+    raise HTTPException(status_code=403, detail="SLT / school admin only")
+
+
+@api_router.get("/school/slt")
+async def list_slt(current=Depends(get_current_user)):
+    """List the school's SLT (school_admin) + teachers + students so an admin can pick who to promote/demote."""
+    _require_slt(current)
+    sid = current.get("school_id")
+    if is_owner(current):
+        # Owner viewing without a school context returns global roster
+        sid_q = {} if not sid else {"school_id": sid}
+    else:
+        sid_q = {"school_id": sid}
+    users = await db.users.find(
+        sid_q,
+        {"_id": 0, "user_id": 1, "name": 1, "email": 1, "role": 1, "grade_level": 1, "picture": 1, "school_id": 1},
+    ).to_list(2000)
+    return {
+        "slt": [u for u in users if u.get("role") == ROLE_SCHOOL_ADMIN],
+        "teachers": [u for u in users if u.get("role") == ROLE_TEACHER],
+        "students": [u for u in users if u.get("role") == ROLE_STUDENT],
+    }
+
+
+@api_router.post("/school/slt")
+async def add_slt(req: SltMemberChange, current=Depends(get_current_user)):
+    """Promote an existing teacher in the same school to school_admin (SLT). Students can NOT be promoted directly."""
+    _require_slt(current)
+    email = req.email.strip().lower()
+    row = await db.users.find_one({"email": email})
+    if not row:
+        raise HTTPException(status_code=404, detail="User with that email not found — invite them first")
+    if not is_owner(current) and row.get("school_id") != current.get("school_id"):
+        raise HTTPException(status_code=403, detail="User is not in your school")
+    if row.get("role") not in {ROLE_TEACHER, ROLE_SCHOOL_ADMIN}:
+        raise HTTPException(status_code=400, detail="Only teachers can be promoted to SLT — invite them as a teacher first")
+    await db.users.update_one({"email": email}, {"$set": {
+        "role": ROLE_SCHOOL_ADMIN,
+        "previous_role": row.get("role"),
+    }})
+    return {"email": email, "role": ROLE_SCHOOL_ADMIN, "promoted_at": datetime.now(timezone.utc).isoformat()}
+
+
+@api_router.delete("/school/slt")
+async def remove_slt(req: SltMemberChange, current=Depends(get_current_user)):
+    """Demote an SLT member back to their previous role (defaults to teacher)."""
+    _require_slt(current)
+    email = req.email.strip().lower()
+    row = await db.users.find_one({"email": email})
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    if row.get("role") != ROLE_SCHOOL_ADMIN:
+        raise HTTPException(status_code=400, detail="User is not currently SLT")
+    if row.get("email") == current.get("email"):
+        raise HTTPException(status_code=400, detail="You can't demote yourself")
+    prev = row.get("previous_role") or ROLE_TEACHER
+    await db.users.update_one({"email": email}, {"$set": {"role": prev}, "$unset": {"previous_role": ""}})
+    return {"email": email, "role": prev}
+
 
 @api_router.get("/teacher/lessons/{lesson_id}")
 async def get_lesson(lesson_id: str, current=Depends(get_current_user)):
     item = await db.lessons.find_one({"lesson_id": lesson_id}, {"_id": 0})
     if not item:
         raise HTTPException(status_code=404, detail="Not found")
+    _require_lesson_read(current, item)
     return item
 
 # ====================== Teacher: homework + AI analysis ======================
@@ -1859,6 +2040,249 @@ async def student_homework(current=Depends(get_current_user)):
     return {"items": out}
 
 # ====================== Teacher: detentions, attendance, achievements ======================
+
+@api_router.patch("/teacher/detentions/{detention_id}")
+async def mark_detention(detention_id: str, payload: dict, current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+    """Mark a detention as attended, missed, or reset. Payload: {status:'attended'|'missed'|'issued'}."""
+    status = (payload.get("status") or "").strip().lower()
+    if status not in {"attended", "missed", "issued"}:
+        raise HTTPException(status_code=400, detail="status must be attended | missed | issued")
+    row = await db.detentions.find_one({"detention_id": detention_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Detention not found")
+    if not is_owner(current) and row.get("school_id") != current.get("school_id"):
+        raise HTTPException(status_code=403, detail="Not your school")
+    await db.detentions.update_one({"detention_id": detention_id}, {"$set": {
+        "status": status,
+        "marked_by": current.get("user_id"),
+        "marked_at": datetime.now(timezone.utc).isoformat(),
+    }})
+    return await db.detentions.find_one({"detention_id": detention_id}, {"_id": 0})
+
+
+# ====================== UK Curriculum (DB-seeded, feeds every subject picker) ======================
+
+UK_CURRICULUM_SEED = [
+    # Primary (KS1 + KS2)
+    {"stage": "Primary", "key_stage": "KS1", "subject": "English",     "topics": ["Phonics", "Reading", "Writing", "Spelling", "Grammar"]},
+    {"stage": "Primary", "key_stage": "KS1", "subject": "Maths",       "topics": ["Number & Place Value", "Addition & Subtraction", "Multiplication", "Shape & Measure"]},
+    {"stage": "Primary", "key_stage": "KS1", "subject": "Science",     "topics": ["Plants", "Animals", "Everyday Materials", "Seasonal Changes"]},
+    {"stage": "Primary", "key_stage": "KS2", "subject": "English",     "topics": ["Reading Comprehension", "Composition", "Grammar & Punctuation", "Spelling"]},
+    {"stage": "Primary", "key_stage": "KS2", "subject": "Maths",       "topics": ["Fractions", "Decimals", "Ratio", "Algebra", "Geometry", "Statistics"]},
+    {"stage": "Primary", "key_stage": "KS2", "subject": "Science",     "topics": ["Living Things", "Materials", "Forces", "Earth & Space", "Electricity"]},
+    {"stage": "Primary", "key_stage": "KS2", "subject": "History",     "topics": ["Ancient Egypt", "Romans", "Vikings", "Tudors", "WWII"]},
+    {"stage": "Primary", "key_stage": "KS2", "subject": "Geography",   "topics": ["Map skills", "UK regions", "Rivers", "Climate zones"]},
+    # Secondary KS3
+    {"stage": "Secondary", "key_stage": "KS3", "subject": "English",   "topics": ["Prose", "Poetry", "Drama", "Non-fiction writing"]},
+    {"stage": "Secondary", "key_stage": "KS3", "subject": "Maths",     "topics": ["Number", "Algebra", "Ratio & Proportion", "Geometry", "Probability", "Statistics"]},
+    {"stage": "Secondary", "key_stage": "KS3", "subject": "Biology",   "topics": ["Cells", "Reproduction", "Ecosystems", "Genetics"]},
+    {"stage": "Secondary", "key_stage": "KS3", "subject": "Chemistry", "topics": ["Particles", "Atoms & Elements", "Reactions", "Acids & Bases"]},
+    {"stage": "Secondary", "key_stage": "KS3", "subject": "Physics",   "topics": ["Forces", "Energy", "Waves", "Electricity", "Space"]},
+    {"stage": "Secondary", "key_stage": "KS3", "subject": "History",   "topics": ["Medieval Britain", "Tudors & Stuarts", "Industrial Revolution", "20th Century"]},
+    {"stage": "Secondary", "key_stage": "KS3", "subject": "Geography", "topics": ["Physical geography", "Human geography", "Development", "Sustainability"]},
+    # GCSE (KS4)
+    {"stage": "Secondary", "key_stage": "GCSE", "subject": "English Language",   "topics": ["Reading fiction", "Reading non-fiction", "Creative writing", "Transactional writing"]},
+    {"stage": "Secondary", "key_stage": "GCSE", "subject": "English Literature", "topics": ["Shakespeare", "19th-century novel", "Modern texts", "Poetry anthology"]},
+    {"stage": "Secondary", "key_stage": "GCSE", "subject": "Maths",              "topics": ["Number", "Algebra", "Ratio", "Geometry", "Probability", "Statistics"]},
+    {"stage": "Secondary", "key_stage": "GCSE", "subject": "Biology",            "topics": ["Cell biology", "Organisation", "Infection & response", "Bioenergetics", "Homeostasis", "Inheritance", "Ecology"]},
+    {"stage": "Secondary", "key_stage": "GCSE", "subject": "Chemistry",          "topics": ["Atomic structure", "Bonding", "Quantitative chemistry", "Chemical changes", "Energy changes", "Rate & extent", "Organic", "Analysis"]},
+    {"stage": "Secondary", "key_stage": "GCSE", "subject": "Physics",            "topics": ["Energy", "Electricity", "Particle model", "Atomic structure", "Forces", "Waves", "Magnetism", "Space"]},
+    {"stage": "Secondary", "key_stage": "GCSE", "subject": "History",            "topics": ["Medicine through time", "Cold War", "Weimar Germany", "Elizabethan England"]},
+    {"stage": "Secondary", "key_stage": "GCSE", "subject": "Geography",          "topics": ["Living world", "UK landscapes", "Urban issues", "Changing economic world", "Resource management"]},
+    {"stage": "Secondary", "key_stage": "GCSE", "subject": "Computer Science",   "topics": ["Algorithms", "Programming", "Data representation", "Computer systems", "Networks", "Cyber security"]},
+    # Sixth Form (A-Level)
+    {"stage": "Sixth Form", "key_stage": "A-Level", "subject": "Mathematics",          "topics": ["Pure Maths", "Statistics", "Mechanics"]},
+    {"stage": "Sixth Form", "key_stage": "A-Level", "subject": "Further Mathematics",  "topics": ["Core Pure", "Further Pure", "Further Statistics", "Further Mechanics"]},
+    {"stage": "Sixth Form", "key_stage": "A-Level", "subject": "Biology",              "topics": ["Biological molecules", "Cells", "Exchange", "Genetics", "Ecosystems"]},
+    {"stage": "Sixth Form", "key_stage": "A-Level", "subject": "Chemistry",            "topics": ["Physical", "Inorganic", "Organic"]},
+    {"stage": "Sixth Form", "key_stage": "A-Level", "subject": "Physics",              "topics": ["Mechanics", "Materials", "Waves", "Electricity", "Nuclear", "Astrophysics"]},
+    {"stage": "Sixth Form", "key_stage": "A-Level", "subject": "English Literature",   "topics": ["Tragedy", "Comedy", "Modern texts", "Unseen"]},
+    {"stage": "Sixth Form", "key_stage": "A-Level", "subject": "History",              "topics": ["Britain 1930-97", "Russia 1917-91", "Civil Rights USA"]},
+    {"stage": "Sixth Form", "key_stage": "A-Level", "subject": "Computer Science",     "topics": ["Programming paradigms", "Data structures", "OS & architecture", "Databases", "Networks", "Algorithms"]},
+    {"stage": "Sixth Form", "key_stage": "A-Level", "subject": "Economics",            "topics": ["Microeconomics", "Macroeconomics", "Global economy"]},
+    {"stage": "Sixth Form", "key_stage": "A-Level", "subject": "Psychology",           "topics": ["Social influence", "Memory", "Attachment", "Approaches", "Research methods"]},
+    # University
+    {"stage": "University", "key_stage": "Undergraduate", "subject": "Mathematics",       "topics": ["Analysis", "Linear Algebra", "Statistics", "Number Theory"]},
+    {"stage": "University", "key_stage": "Undergraduate", "subject": "Computer Science",  "topics": ["Algorithms", "Systems", "AI & ML", "Databases", "Networks", "Theory"]},
+    {"stage": "University", "key_stage": "Undergraduate", "subject": "Engineering",       "topics": ["Mechanical", "Electrical", "Civil", "Chemical"]},
+    {"stage": "University", "key_stage": "Undergraduate", "subject": "Medicine",          "topics": ["Anatomy", "Physiology", "Pharmacology", "Pathology", "Clinical skills"]},
+    {"stage": "University", "key_stage": "Undergraduate", "subject": "Law",               "topics": ["Contract", "Tort", "Constitutional", "Criminal", "EU law"]},
+    {"stage": "University", "key_stage": "Undergraduate", "subject": "Business",          "topics": ["Finance", "Marketing", "Operations", "Strategy", "Economics"]},
+    {"stage": "University", "key_stage": "Undergraduate", "subject": "Psychology",        "topics": ["Cognitive", "Developmental", "Biological", "Social", "Clinical"]},
+    {"stage": "University", "key_stage": "Postgraduate",  "subject": "Research Methods",  "topics": ["Quantitative", "Qualitative", "Ethics", "Dissertation"]},
+]
+
+
+async def _seed_curriculum():
+    existing = await db.curriculum.count_documents({})
+    if existing == 0:
+        for row in UK_CURRICULUM_SEED:
+            await db.curriculum.insert_one({**row, "curriculum_id": f"curr_{uuid.uuid4().hex[:10]}"})
+        logging.info("Seeded UK curriculum with %d rows", len(UK_CURRICULUM_SEED))
+
+
+@api_router.get("/curriculum")
+async def get_curriculum(stage: Optional[str] = None, key_stage: Optional[str] = None):
+    q = {}
+    if stage: q["stage"] = stage
+    if key_stage: q["key_stage"] = key_stage
+    rows = await db.curriculum.find(q, {"_id": 0}).sort([("stage", 1), ("key_stage", 1), ("subject", 1)]).to_list(500)
+    return {"count": len(rows), "curriculum": rows}
+
+
+# ====================== Timetable (weekly recurring + one-off overrides) ======================
+
+class TimetableEntry(BaseModel):
+    day_of_week: int = Field(..., ge=0, le=6)  # 0=Mon..6=Sun
+    start_time: str                             # "HH:MM"
+    end_time: str
+    subject: str
+    class_id: Optional[str] = None
+    teacher_email: Optional[str] = None
+    room: Optional[str] = None
+
+
+class TimetableOverride(BaseModel):
+    date: str          # YYYY-MM-DD
+    entry_id: Optional[str] = None   # cancels this recurring entry for this date if provided
+    replacement: Optional[TimetableEntry] = None
+
+
+@api_router.get("/timetable")
+async def get_timetable(current=Depends(get_current_user)):
+    sid = current.get("school_id")
+    if not sid:
+        return {"recurring": [], "overrides": []}
+    recurring = await db.timetable_entries.find({"school_id": sid}, {"_id": 0}).sort("day_of_week", 1).to_list(500)
+    overrides = await db.timetable_overrides.find({"school_id": sid}, {"_id": 0}).sort("date", 1).to_list(500)
+    return {"recurring": recurring, "overrides": overrides}
+
+
+@api_router.post("/timetable/entries")
+async def add_timetable_entry(entry: TimetableEntry, current=Depends(require_authed_role(ROLE_SCHOOL_ADMIN, ROLE_TEACHER))):
+    sid = current.get("school_id")
+    if not sid and not is_owner(current):
+        raise HTTPException(status_code=400, detail="Not linked to a school")
+    doc = {**entry.dict(), "entry_id": f"tt_{uuid.uuid4().hex[:8]}", "school_id": sid,
+           "created_by": current.get("user_id"), "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.timetable_entries.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/timetable/entries/{entry_id}")
+async def delete_timetable_entry(entry_id: str, current=Depends(require_authed_role(ROLE_SCHOOL_ADMIN, ROLE_TEACHER))):
+    row = await db.timetable_entries.find_one({"entry_id": entry_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not is_owner(current) and row.get("school_id") != current.get("school_id"):
+        raise HTTPException(status_code=403, detail="Not your school")
+    await db.timetable_entries.delete_one({"entry_id": entry_id})
+    return {"deleted": True}
+
+
+@api_router.post("/timetable/overrides")
+async def add_timetable_override(ov: TimetableOverride, current=Depends(require_authed_role(ROLE_SCHOOL_ADMIN, ROLE_TEACHER))):
+    sid = current.get("school_id")
+    doc = {**ov.dict(), "override_id": f"tto_{uuid.uuid4().hex[:8]}", "school_id": sid,
+           "created_by": current.get("user_id"), "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.timetable_overrides.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+# ====================== Test accounts (Owner-only bulk-delete flag) ======================
+
+class TestAccountCreate(BaseModel):
+    email: EmailStr
+    name: str
+    role: Literal["student", "teacher", "school_admin", "parent"] = "student"
+    school_id: Optional[str] = None
+    password: str = "TestPass1!"
+
+
+@api_router.post("/owner/test-accounts")
+async def create_test_account(req: TestAccountCreate, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    email = req.email.lower()
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already exists")
+    doc = {
+        "user_id": f"test_{uuid.uuid4().hex[:10]}",
+        "email": email,
+        "name": req.name,
+        "role": req.role,
+        "school_id": req.school_id,
+        "grade_level": "uk_y10",
+        "provider": "email",
+        "password_hash": hash_password(req.password),
+        "test_account": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(doc)
+    doc.pop("_id", None); doc.pop("password_hash", None)
+    return doc
+
+
+@api_router.get("/owner/test-accounts")
+async def list_test_accounts(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    rows = await db.users.find({"test_account": True}, {"_id": 0, "password_hash": 0}).to_list(500)
+    return {"count": len(rows), "accounts": rows}
+
+
+@api_router.delete("/owner/test-accounts")
+async def wipe_test_accounts(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    res = await db.users.delete_many({"test_account": True})
+    return {"deleted": res.deleted_count}
+
+
+# ====================== Business dashboard (annual pricing tiers) ======================
+
+BUSINESS_PRICING = {
+    "schools": [
+        {"tier": "Small",  "students": "600-1,000",   "annual_gbp": 3000},
+        {"tier": "Medium", "students": "1,000-1,500", "annual_gbp": 8000},
+        {"tier": "Large",  "students": "1,500+",       "annual_gbp": 15000},
+    ],
+    "mats": [
+        {"tier": "MAT 1-5 schools",   "annual_gbp": 60000},
+        {"tier": "MAT 5-10 schools",  "annual_gbp": 100000},
+        {"tier": "MAT 10-30 schools", "annual_gbp": 400000},
+        {"tier": "MAT 30-50 schools", "annual_gbp": 600000},
+        {"tier": "MAT 50-80 schools", "annual_gbp": 900000},
+        {"tier": "MAT 80-100 schools","annual_gbp": 1500000},
+    ],
+}
+
+
+@api_router.get("/owner/business/pricing")
+async def business_pricing(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    return BUSINESS_PRICING
+
+
+# ====================== Public app config ======================
+
+@api_router.get("/config")
+async def app_config():
+    """Public config for the frontend — support email, current DPA version, feature flags."""
+    return {
+        "support_email": "schoollearnsupport@pm.me",
+        "dpa_version": DPA_DOCUMENT.get("version"),
+        "brand": "Learnify · School Learn",
+    }
+
+
+# ====================== Students: strict privacy (no teacher/roster access) ======================
+# NOTE: student-facing endpoints already scope by user_id (see /student/my-detentions, /progress).
+# Any staff-only listing endpoints (/school/slt, /school/classes, /teacher/lessons, /teacher/detentions)
+# require ROLE_TEACHER / ROLE_SCHOOL_ADMIN so students cannot see teacher details or the roster.
 
 @api_router.post("/teacher/detention")
 async def set_detention(req: DetentionCreate, current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
@@ -2182,8 +2606,9 @@ DPA_DOC_ID = "school_learn_uk_gdpr_dpa_v1"
 
 DPA_DOCUMENT = {
     "title": "SCHOOL LEARN — UK GDPR PRIVACY NOTICE AND DATA PROCESSING AGREEMENT",
-    "version": "1.1",
-    "effective_date": "2026-02-20",
+    "version": "2.0",
+    "effective_date": "2026-02-21",
+    "support_email": "schoollearnsupport@pm.me",
     "contents": [
         "1. Introduction",
         "2. Roles and Responsibilities",
@@ -2201,64 +2626,77 @@ DPA_DOCUMENT = {
         "14. Liability",
     ],
     "sections": [
-        {
-            "heading": "Introduction",
-            "body": "School Learn is an educational platform designed to support teaching, learning, assessment, revision activities and AI-assisted educational services. This document explains what personal data is processed, why it is processed, how it is protected and the rights of individuals under UK GDPR and the Data Protection Act 2018.",
-        },
-        {
-            "heading": "Roles and Responsibilities",
-            "body": "Schools and educational institutions generally act as Data Controllers. School Learn acts as a Data Processor and processes personal data only on documented instructions from the Controller.",
-        },
-        {
-            "heading": "Personal Data We Process",
-            "body": "The platform may process names, school email addresses, user account details, assessment and attainment information, homework submissions, learning progress information, user-generated educational content and limited technical security data.",
-        },
-        {
-            "heading": "Purposes of Processing",
-            "body": "Processing supports account management, delivery of educational content, assessments, revision activities, AI-assisted support, safeguarding, security and compliance obligations.",
-        },
-        {
-            "heading": "Lawful Bases for Processing",
-            "body": "Processing may rely on Legal Obligation, Public Task, Contract and Legitimate Interests where appropriate. Special category data will only be processed where a relevant Article 9 condition applies.",
-        },
-        {
-            "heading": "Security Measures",
-            "body": "Appropriate technical and organisational measures are implemented, including encryption, access controls, security monitoring and secure development practices.",
-        },
-        {
-            "heading": "Sub-processors",
-            "body": "Approved third-party providers may be used to host or support the service. All sub-processors are subject to contractual data protection obligations equivalent to UK GDPR requirements.",
-        },
-        {
-            "heading": "Data Subject Rights",
-            "body": "Individuals may exercise rights of access, rectification, erasure, restriction, portability and objection, subject to applicable law.",
-        },
-        {
-            "heading": "Personal Data Breaches",
-            "body": "School Learn will notify Controllers without undue delay after becoming aware of a personal data breach affecting personal data processed on their behalf.",
-        },
-        {
-            "heading": "International Transfers",
-            "body": "International transfers will only occur where appropriate safeguards are in place, including adequacy regulations, IDTA or the UK Addendum to SCCs.",
-        },
-        {
-            "heading": "Retention and Deletion",
-            "body": "Personal data is retained only for as long as necessary and deleted or returned upon termination of services, subject to legal obligations.",
-        },
-        {
-            "heading": "Children's Data",
-            "body": "The platform is designed with children's privacy and safeguarding considerations in mind and processes children's data only for legitimate educational purposes.",
-        },
-        {
-            "heading": "Complaints",
-            "body": "Individuals may contact their institution or the Information Commissioner's Office (ICO) regarding concerns about personal data processing.",
-        },
-        {
-            "heading": "Liability",
-            "body": "Each party remains responsible for its own obligations under applicable data protection legislation. Nothing seeks to exclude liability where doing so would be unlawful.",
-        },
+        {"heading": "Introduction", "body": "School Learn is an educational platform designed to support teaching, learning, assessment, revision activities and AI-assisted educational services. This document explains what personal data is processed, why it is processed, how it is protected and the rights of individuals under UK GDPR and the Data Protection Act 2018. For any questions about this notice or to exercise data rights, contact schoollearnsupport@pm.me."},
+        {"heading": "Roles and Responsibilities", "body": "Schools and educational institutions generally act as Data Controllers. School Learn acts as a Data Processor and processes personal data only on documented instructions from the Controller."},
+        {"heading": "Personal Data We Process", "body": "At present, the platform collects and processes the following personal data: Student Name; Teacher Name; Class Name; Year Group; Disabilities (special category data — see Section 5); User Account / Login Details; Learning Progress Information (reset monthly — see Section 11)."},
+        {"heading": "Purposes of Processing", "body": "Processing supports account management, delivery of educational content, assessments, revision activities, AI-assisted support, safeguarding, security and compliance obligations."},
+        {"heading": "Lawful Bases for Processing", "body": "Processing may rely on Legal Obligation, Public Task, Contract and Legitimate Interests where appropriate. Special category data will only be processed where a relevant Article 9 condition applies."},
+        {"heading": "Security Measures", "body": "Appropriate technical and organisational measures are implemented, including encryption, access controls, security monitoring and secure development practices."},
+        {"heading": "Sub-processors", "body": "Approved third-party providers may be used to host or support the service. All sub-processors are subject to contractual data protection obligations equivalent to UK GDPR requirements."},
+        {"heading": "Data Subject Rights", "body": "Individuals may exercise rights of access, rectification, erasure, restriction, portability and objection, subject to applicable law. Requests can be directed to schoollearnsupport@pm.me."},
+        {"heading": "Personal Data Breaches", "body": "School Learn will notify Controllers without undue delay after becoming aware of a personal data breach affecting personal data processed on their behalf."},
+        {"heading": "International Transfers", "body": "International transfers will only occur where appropriate safeguards are in place, including adequacy regulations, IDTA or the UK Addendum to SCCs."},
+        {"heading": "Retention and Deletion", "body": "User account / login details are retained indefinitely and are only deleted when the school manually requests or performs deletion. Learning progress data is retained for one month and is then wiped, resetting the baseline so that the AI can adapt to the student's current level. Before this monthly reset, the school may choose to save a file of that month's learning data for the student if they wish to retain a record. All personal data is otherwise retained only for as long as necessary and deleted or returned upon termination of services, subject to legal obligations."},
+        {"heading": "Children's Data", "body": "The platform is designed with children's privacy and safeguarding considerations in mind and processes children's data only for legitimate educational purposes."},
+        {"heading": "Complaints", "body": "Individuals may contact their institution, School Learn at schoollearnsupport@pm.me, or the Information Commissioner's Office (ICO) regarding concerns about personal data processing."},
+        {"heading": "Liability", "body": "Each party remains responsible for its own obligations under applicable data protection legislation. Nothing seeks to exclude liability where doing so would be unlawful."},
     ],
 }
+
+
+# ====================== Retention: 30-day learning-progress reset ======================
+
+PROGRESS_RETENTION_DAYS = 30
+
+
+async def _prune_stale_progress(user_id: Optional[str] = None) -> int:
+    """Lazily wipe learning-progress rows older than 30 days (per Section 11 of the DPA)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=PROGRESS_RETENTION_DAYS)).isoformat()
+    q = {"updated_at": {"$lt": cutoff}}
+    if user_id:
+        q["user_id"] = user_id
+    result = await db.progress.delete_many(q)
+    return result.deleted_count
+
+
+@api_router.get("/progress/export")
+async def export_my_progress(current=Depends(get_current_user)):
+    """Download the current student's learning progress as a JSON file — for pre-wipe archival per Section 11."""
+    from fastapi.responses import StreamingResponse
+    rows = await db.progress.find({"user_id": current["user_id"]}, {"_id": 0}).to_list(2000)
+    now = datetime.now(timezone.utc)
+    payload = {
+        "exported_at": now.isoformat(),
+        "user_id": current["user_id"],
+        "user_name": current.get("name"),
+        "email": current.get("email"),
+        "retention_window_days": PROGRESS_RETENTION_DAYS,
+        "next_reset_after": (now + timedelta(days=PROGRESS_RETENTION_DAYS)).isoformat(),
+        "records": rows,
+    }
+    body = json.dumps(payload, indent=2, ensure_ascii=False)
+    filename = f"learnify-progress-{current.get('user_id')}-{now.strftime('%Y%m%d')}.json"
+    return StreamingResponse(
+        iter([body]),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@api_router.post("/progress/reset")
+async def reset_my_progress(current=Depends(get_current_user)):
+    """Manual pre-wipe: student or school-admin can trigger the 30-day baseline reset early."""
+    deleted = await db.progress.delete_many({"user_id": current["user_id"]})
+    return {"deleted": deleted.deleted_count, "reset_at": datetime.now(timezone.utc).isoformat()}
+
+
+@api_router.post("/owner/progress/prune")
+async def owner_progress_prune(current=Depends(get_current_user)):
+    """Owner-triggered global sweep of >30-day-old progress rows (idempotent)."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    deleted = await _prune_stale_progress()
+    return {"deleted": deleted, "cutoff_days": PROGRESS_RETENTION_DAYS}
 
 
 def _encrypt_json(obj: dict) -> str:
@@ -2740,6 +3178,7 @@ async def patch_promo_code(code: str, req: PromoPatch, current=Depends(get_curre
 
 @app.on_event("startup")
 async def startup():
+    await _seed_curriculum()
     # Encrypt & store the UK GDPR / DPA document at rest
     await _seed_dpa_document()
 
@@ -2801,6 +3240,16 @@ async def startup():
                     "password_hash": hash_password(co["password"]),
                 }}
             )
+
+    # Always keep Yusufm_1 on the top-tier plan (his personal owner account)
+    await db.users.update_one(
+        {"email": OWNER_EMAIL.lower()},
+        {"$set": {
+            "subscription_tier": "pro",
+            "subscription_lifetime": True,
+            "subscription_expires_at": None,
+        }},
+    )
 
     # Seed a tester school so the owner can see the school view
     tester_school = await db.schools.find_one({"school_id": TESTER_SCHOOL_ID})

@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 14 backend-only retest of the 5 fixes from iteration 13 plus a full regression sweep. 62 pytest cases executed against the public preview URL: 25 new fix-verification cases (/app/backend/tests/test_iter14_fix_verification.py) and all 37 iteration-13 cases re-run — 62/62 PASSED. Both previously-failing cross-school authorisation tests (test_pptx_cross_school_teacher_should_be_403, test_get_lesson_cross_school_should_be_403) are now green. No 500s in backend logs; all test data cleaned up (verified 0 leftovers).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/school/slt", "issue": "Still no invite endpoint — promotion requires the user to already exist ('invite them first'). The 'invite teachers/students' requirement remains unimplemented (carried over from iteration 13, out of scope for this retest)."},
+      {"endpoint": "POST /api/billing/checkout", "issue": "origin_url remains mandatory (422 without it) and the documented `period` field is ignored (period derives from PLANS). Works with origin_url — returns live Stripe url + session_id."},
+      {"endpoint": "DELETE /api/school/slt, DELETE /api/school/classes/{id}/teachers", "issue": "Still require a JSON body on DELETE; some proxies/fetch wrappers strip DELETE bodies."},
+      {"endpoint": "GET /api/school/classes vs /api/teacher/lessons vs /api/school/slt", "issue": "Inconsistent list envelope keys ('classes' vs 'items' vs named arrays)."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter14_fix_verification.py",
+    "/app/backend/tests/test_iter13_slt_pptx.py",
+    "/app/test_reports/pytest/iter14_fixes.xml",
+    "/app/test_reports/pytest/iter14_regression.xml"
+  ],
+  "action_items": [
+    "No blocking backend issues found. Optional carry-overs: implement POST /api/school/invite; document/default origin_url on /billing/checkout; split server.py (3128 lines) into routers."
+  ],
+  "critical_code_review_comments": [
+    "_require_lesson_read (server.py:1748) is a clean central guard — reuse it for any future lesson-scoped route (e.g. delete/duplicate/share) instead of re-deriving school scope inline.",
+    "add_slt overwrites previous_role on every promote; promoting an already-school_admin stores previous_role='school_admin' (harmless but consider skipping the write when role is already school_admin).",
+    "remove_slt falls back to previous_role or 'teacher'; a legacy SLT doc created before this fix with no previous_role will still be demoted to 'teacher' — consider a one-off backfill.",
+    "GET /api/school/slt projection is now a strict whitelist (verified: planted mfa_secret/dpa_*/subscription_* fields are filtered out). Apply the same whitelist pattern to any other user-listing endpoint (e.g. class roster responses).",
+    "server.py is still 3128 lines — split into routers (auth, school, teacher, billing, legal).",
+    "lesson_pptx() still imports pptx/StreamingResponse/BytesIO inside the handler and builds the deck synchronously on the event loop."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter14_fix_verification.py"],
+  "success_rate": {"backend": "100% (62/62 pytest cases)", "frontend": "not tested (backend-only pass as requested)"},
+  "seed_data_creation": "Throwaway accounts t14_*@qa-iter14.co.uk (owning teacher, same-school teacher, same-school student, cross-school teacher/admin/student, promote fixtures) created via public register + direct mongo role/school patch; 1 TEST_ lesson. All deleted; mongo verified 0 leftovers for both qa-iter13 and qa-iter14 domains and 0 stray previous_role docs.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "owner yusufm_1@outlook.com/The_Underdog, co-owner khalida700@hotmail.co.uk/The_Underdog, school_admin tester@tester.org/123 — all verified working with correct roles.",
+  "context_for_next_testing_agent": "Run `python -m pytest tests/test_iter14_fix_verification.py tests/test_iter13_slt_pptx.py -v -p no:randomly` from /app/backend — both suites are fully green as of iteration 14. Verified this pass: PPTX + GET lesson allow owner/owning-teacher/same-school teacher+school_admin (200) and 403 for cross-school teacher, cross-school school_admin, cross-school student and same-school student; 404 for missing id; 401 unauthenticated. /school/slt returns ONLY {user_id,name,email,role,grade_level,picture,school_id} (proved by planting mfa_secret/mfa_secret_pending/dpa_accepted_*/subscription_* on a school user first). Promote student -> 400 'Only teachers can be promoted…' with role untouched; promote teacher -> previous_role='teacher', DELETE restores 'teacher' and $unsets previous_role; promote school_admin -> previous_role='school_admin', DELETE restores it. Gotchas: (1) throwaway emails must be lowercase — register lowercases the email so a mixed-case fixture email makes the direct mongo role patch silently no-op (assert matched_count==1); (2) EmailStr rejects .test TLDs, use *.co.uk; (3) /billing/checkout needs origin_url; (4) keep use_ai=false on lesson creation to avoid AI spend; (5) frontend/UI has NOT been tested in iterations 13-14.",
+  "rca_of_the_issue": "Iteration 13's two HIGH bugs are fixed by the new _require_lesson_read(current,row) helper (server.py:1748) which now short-circuits on is_owner, then owning teacher_user_id, then staff role AND matching school_id, else 403 — replacing the previously AND-ed role-only expression in lesson_pptx() and the total absence of any check in get_lesson(). SLT issues fixed via a whitelisted projection in list_slt(), a role sanity check in add_slt() (role must be teacher|school_admin), and previous_role tracking restored/unset in remove_slt(). Reproduced-then-verified for every case above."
+}

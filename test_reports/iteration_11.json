@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 11 end-to-end verification of (1) auth/session reliability, (2) Dream Page in nav, (3) focus-timer removal, (4) UK-only curriculum, (5) DPA v2.0 + 30-day progress retention. Created /app/backend/tests/test_iter11_uk_dpa_progress.py (32 tests) — 31 pass, 1 fails on a real leftover /focus nav link. All backend APIs verified 100% green: all 3 accounts login 200 via BOTH /api/auth/login and /api/auth/login_username with correct roles; /api/auth/me consistent; invalid token -> 401 then valid login still works; DPA v2.0 exact-match (14 sections, support_email schoollearnsupport@pm.me, S3/S11/S13 content verified); DPA gate re-acceptance for Yusuf+Khalida stores dpa_accepted_version='2.0'; progress CRUD + retention_days:30 + lazy wipe of a 40-day-old row (verified directly in Mongo) + /progress/reset + /progress/export (JSON attachment, records[], retention_window_days:30) + /owner/progress/prune 403 tester / 200 owner; UK grade registration (uk_y1, uk_undergrad) and PATCH profile to uk_masters accepted; promo_codes CRUD, /owner/dpa/acceptances, /school/classes and class roster CRUD all 200. Frontend Playwright: owner + tester login, DPA gate accept, sidebar sn-dreams for owner AND school_admin, no sn-focus/quick-focus-mode, /dreams loads clean, /progress has no focus stats, session survives reload, sign-out visible, /contact shows schoollearnsupport@pm.me, /pricing has no 'Focus Mode'. THREE frontend defects found — the most serious is that the grade-level dropdown now renders only 3 options (University tiers only), so no Year 1–13 option is selectable anywhere in the UI.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/focus/* (focus_sessions endpoints, server.py ~line 890-905)", "issue": "Dead focus-session endpoints and db.focus_sessions collection remain server-side after 'remove all focus timer components'. No frontend consumer. Recommend deleting for cleanliness."},
+      {"endpoint": "/api/auth/session (Google login)", "issue": "New Google users are created with grade_level='high_school' — a non-UK legacy value that no longer exists in GRADE_LEVELS. Should default to 'uk_y10'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "components/GradeLevelSelect.jsx", "issue": "CRITICAL: hardcoded `order` array still lists the OLD group names ('Early years', 'Generic / ISCED', 'United Kingdom', 'United States', 'Canada', 'Australia', 'Germany', 'Japan', 'China', 'Other', 'University'), but the new UK-only GRADE_LEVELS use groups 'Primary', 'Secondary', 'GCSE', 'Sixth Form', 'University'. Only 'University' matches, so the dropdown renders exactly 3 options (uk_undergrad / uk_masters / uk_doctoral). Verified live: dashboard-grade-select has 3 option values; select_option('uk_y7') times out with 'did not find some options'. Reception and Years 1-13 are UNSELECTABLE in Dashboard, Register step 3 and Help — the core 'Year 1 to University' requirement fails in the UI.", "selector": "[data-testid=\"dashboard-grade-select\"]", "priority": "CRITICAL"},
+      {"component": "components/GlobalNav.jsx", "issue": "Still contains 3 nav items pointing at the removed /focus route ({ to: '/focus', label: 'Focus', icon: Timer, testid: 'nav-focus' }) for school_admin/teacher, student and individual roles. GlobalNav is rendered directly by Contact.jsx, Safety.jsx, Pricing.jsx, BillingSuccess.jsx and by AppLayout, so a logged-in user on /contact sees a 'Focus' link (nav-focus count = 1 confirmed live). Clicking it hits the SPA '*' fallback and silently renders the Landing page. Also remove the now-unused Timer icon import.", "selector": "[data-testid=\"nav-focus\"]", "priority": "HIGH"},
+      {"component": "pages/Landing.jsx (line 22)", "issue": "Hero eyebrow still reads 'Preschool -> University', which contradicts the UK-only Year 1 (Reception) to University curriculum. Confirmed rendered on the public landing page.", "selector": "n/a (hero text)", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/progress", "issues": ["Page never surfaces the new 30-day retention policy or the export/reset controls that the backend exposes (/api/progress/export, /api/progress/reset). Body text contains no mention of the 30-day window, so the DPA S11 'save a file before the monthly reset' right is not reachable from the UI."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter11_uk_dpa_progress.py",
+    "/app/test_reports/pytest/iter11_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix GradeLevelSelect.jsx — replace the stale `order` array with the new group names ['Primary','Secondary','GCSE','Sixth Form','University'] (or derive the order from Object.keys(groups) / GRADE_LEVELS itself so it can never drift again). Currently only 3 of 18 grade levels are selectable.",
+    "HIGH: Remove the three { to: '/focus', testid: 'nav-focus' } entries (and unused Timer import) from components/GlobalNav.jsx.",
+    "MEDIUM: Change Landing.jsx line 22 'Preschool -> University' to UK wording e.g. 'Reception -> University'.",
+    "LOW: Delete leftover backend /focus session endpoints + db.focus_sessions usage.",
+    "LOW: /api/auth/session creates Google users with grade_level='high_school'; change default to 'uk_y10'.",
+    "LOW: Expose /api/progress/export and /api/progress/reset on the Progress page and state the 30-day retention window (DPA S11 promise)."
+  ],
+  "critical_code_review_comments": [
+    "GradeLevelSelect hardcodes group names that must stay in sync with subjects.js — derive them instead; this exact drift silently dropped 15 of 18 grade options with no error.",
+    "server.py is 2908 lines; DPA document, retention, auth, promo and AI prompt logic should be split into routers/modules.",
+    "PROGRESS_RETENTION_DAYS is defined at line 2195 but referenced by list_progress at line 930 — works only because it resolves at call time. Move constants to the top of the module.",
+    "Two separate nav components (SideNav + GlobalNav) duplicate role->menu logic; the /focus regression happened only in GlobalNav. Consolidate into one role-nav source of truth."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter11_uk_dpa_progress.py"],
+  "success_rate": {"backend": "100% (31/31 API+data tests)", "frontend": "78% (7/9 acceptance checks; grade-level dropdown and GlobalNav focus link fail)"},
+  "seed_data_creation": "Two throwaway registrations (TEST_uky1_*@qa-test.org, TEST_ukug_*@qa-test.org) for grade-level acceptance; TEST_ progress rows (all deleted by /progress/reset); one TEST_Class_* class created and deleted; one TESTQA* promo code created and deactivated via PATCH (no DELETE endpoint exists).",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Owner yusufm_1@outlook.com / The_Underdog (Yusufm_1); Co-owner khalida700@hotmail.co.uk / The_Underdog (khalida700); Tester tester@tester.org / 123 (Tester1). NOTE for docs: /app/memory/test_credentials.md still says 'Current DPA version 1.1' and lists 'Focus' as a tester-visible page — both stale.",
+  "context_for_next_testing_agent": "Login response field is `token` (NOT access_token). Promo endpoints are /api/owner/promo_codes (underscore) and support GET/POST/PATCH only — no DELETE. Adding students to a class requires body {\"emails\": [..]}. DPA gate modal appears on first login after a checksum bump; accept via [data-testid=dpa-gate-accept] before asserting on dashboard. Tester1 also gets a 3-step OnboardingTour modal that must be skipped. Sidebar testids are sn-* and logout is [data-testid=side-nav-logout]. After re-running, re-check TestFocusRemoval::test_no_focus_links_anywhere_in_nav (GlobalNav) and add an assertion that the rendered dashboard-grade-select contains >=18 options.",
+  "rca_of_the_issue": "Grade dropdown regression: subjects.js was rewritten to UK-only and the per-item `group` keys changed to Primary/Secondary/GCSE/Sixth Form/University, but components/GradeLevelSelect.jsx still iterates a hardcoded legacy `order` list ('Early years','Generic / ISCED','United Kingdom','United States',...). `order.map(g => groups[g] && ...)` therefore evaluates to false for every group except 'University', rendering only 3 <option>s and no console error. Repro: log in as any user, open /dashboard, inspect [data-testid=dashboard-grade-select] -> 3 options; attempting to pick Year 7 is impossible. Fix: const order = ['Primary','Secondary','GCSE','Sixth Form','University'] or iterate Object.keys(gradeLevelsGrouped()). Focus leftover: the removal pass covered SideNav/Dashboard/Progress/Pricing and deleted Focus.jsx and the /focus route, but GlobalNav.jsx was missed, leaving a link to a non-existent route that falls through to the '*' -> Landing catch-all."
+}

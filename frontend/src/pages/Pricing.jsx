@@ -8,7 +8,7 @@ import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
 const FEATURES = {
-  free: ["5 AI generations per day", "Browse all subjects", "Focus Mode timer", { neg: true, text: "No practice papers" }],
+  free: ["5 AI generations per day", "Browse all subjects", "Homework help", { neg: true, text: "No practice papers" }],
   basic: ["30 AI generations per day", "All subjects unlocked", "Generic practice papers", "Flashcards & quizzes", "AI tutor chat"],
   standard: ["Unlimited AI generations", "All subjects unlocked", "Full practice papers + PDF", "Unlimited AI tutor", "Priority queue"],
   pro: ["Everything in Standard", "Exam-board papers (AQA, Edexcel, OCR, IB, CIE)", "GCSE / A-Level / IB style", "Priority support"],

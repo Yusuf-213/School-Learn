@@ -6,7 +6,7 @@ import GlobalNav from "@/components/GlobalNav";
 import { GoogleLogo, Envelope, Lock, Warning, User } from "@phosphor-icons/react";
 
 export default function Login() {
-  const { loginWithEmail, setUser } = useAuth();
+  const { loginWithEmail, loginWithIdentifier } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [identifier, setIdentifier] = useState("");
@@ -20,13 +20,11 @@ export default function Login() {
     setErr("");
     setLoading(true);
     try {
-      // Allow username OR email login
+      // Allow username OR email login — both paths go through AuthContext so state is consistent
       if (identifier.includes("@")) {
         await loginWithEmail(identifier, password);
       } else {
-        const { data } = await api.post("/auth/login_username", { identifier, password });
-        localStorage.setItem("token", data.token);
-        setUser(data.user);
+        await loginWithIdentifier(identifier, password);
       }
       navigate(from, { replace: true });
     } catch (ex) {

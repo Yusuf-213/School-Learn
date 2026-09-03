@@ -5,7 +5,7 @@ import GradeLevelSelect from "@/components/GradeLevelSelect";
 import { SUBJECTS, gradeLevelLabel } from "@/lib/subjects";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { Atom, BookOpen, Bank, Barbell, Function, Sparkle, Timer, ArrowRight, Trophy, Clock, Link as LinkIcon, ShieldCheck, X } from "@phosphor-icons/react";
+import { Atom, BookOpen, Bank, Barbell, Function, Sparkle, ArrowRight, Trophy, Clock, Link as LinkIcon, ShieldCheck, X } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const iconMap = { Atom, BookOpen, Bank, Barbell, Function };
@@ -59,7 +59,7 @@ function MagicLinkBanner() {
 
 export default function Dashboard() {
   const { user, refreshUser } = useAuth();
-  const [stats, setStats] = useState({ topics_started: 0, topics_completed: 0, focus_sessions_completed: 0, focus_minutes: 0 });
+  const [stats, setStats] = useState({ topics_started: 0, topics_completed: 0 });
   const [progress, setProgress] = useState([]);
 
   useEffect(() => {

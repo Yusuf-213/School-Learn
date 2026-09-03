@@ -29,7 +29,7 @@ export default function Contact() {
           <ChatCircle size={24} weight="duotone" />
           <h2 className="font-display font-bold text-xl mt-2">Support</h2>
           <p className="text-sm text-[#4A4A4A] mt-1">Bugs, feature requests, or anything else.</p>
-          <p className="mt-2 text-sm"><EnvelopeSimple size={14} className="inline mr-1" /> <a className="underline" href="mailto:support@learnify.app">support@learnify.app</a></p>
+          <p className="mt-2 text-sm"><EnvelopeSimple size={14} className="inline mr-1" /> <a className="underline" href="mailto:schoollearnsupport@pm.me">schoollearnsupport@pm.me</a></p>
         </div>
 
         <div className="brutal-card p-6 bg-lavender">

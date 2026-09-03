@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import GlobalNav from "@/components/GlobalNav";
-import { Atom, BookOpen, Bank, Barbell, Function, Sparkle, Timer, CheckCircle, ArrowRight, Question, ChalkboardTeacher, Compass, Trophy, ChartLineUp } from "@phosphor-icons/react";
+import { Atom, BookOpen, Bank, Barbell, Function, Sparkle, CheckCircle, ArrowRight, Question, ChalkboardTeacher, Compass, Trophy, ChartLineUp } from "@phosphor-icons/react";
 
 const SUBJECT_TILES = [
   { name: "Mathematics", color: "#E6F7EB", icon: Function },
@@ -19,7 +19,7 @@ export default function Landing() {
       <section className="max-w-7xl mx-auto px-6 pt-16 pb-20 grid md:grid-cols-2 gap-12 items-center">
         <div className="space-y-8 animate-fade-up">
           <span className="inline-block px-3 py-1 border-2 border-ink rounded-full bg-butter text-xs tracking-[0.2em] uppercase font-bold shadow-brutal">
-            Preschool → University
+            Reception → University
           </span>
           <h1 className="font-display font-black text-5xl sm:text-6xl lg:text-7xl tracking-tight leading-[0.95]">
             One platform.

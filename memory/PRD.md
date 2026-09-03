@@ -126,6 +126,59 @@
 - Backend: 39/39 pytest tests across `test_iter9_magic_onboarding_roster.py` and `test_iter10_fix_verification.py`.
 - Frontend: all targeted flows pass in `iteration_10.json`.
 
+## Iteration 13 — DPA v2.0 exact-match, 30-day progress reset, contradictions flagged
+
+### Done
+- **DPA v2.0** seeded verbatim from the user's Privacy Notice: 14 sections including the exact "Personal Data We Process" list (Student Name, Teacher Name, Class Name, Year Group, Disabilities, Login, Learning Progress) and the exact retention wording. `support_email` = `schoollearnsupport@pm.me`. Encrypted at rest as before. Version bump auto-invalidates prior acceptances so every user re-signs the new text.
+- **30-day learning progress reset**:
+  - `GET /api/progress` lazily wipes rows whose `updated_at` is older than 30 days, so the AI baseline resets automatically per Section 11.
+  - `GET /api/progress/export` returns a JSON download of the current student's progress (for the pre-wipe school-side archive).
+  - `POST /api/progress/reset` — manual student/school-admin baseline reset.
+  - `POST /api/owner/progress/prune` — owner-only global sweep.
+- **Contact page** now shows `schoollearnsupport@pm.me`.
+- **Retention** for account/login details is indefinite (matches Section 11); the platform never auto-deletes user rows.
+- Focus mode removed everywhere; Dreams nav visible to every role including owner; sessions consolidated through AuthContext (no duplicate login paths).
+
+### Notice contradictions flagged (for the user's follow-up)
+- **Section 3 · Disabilities field is documented but not yet collected.** The Register / SchoolSignup forms have no `disabilities` capture, and the `users` schema has no such field. Either add a form field + Article 9 lawful basis prompt, or amend the notice.
+- **Section 6 · UK/EU hosting.** MongoDB currently runs inside the Emergent Kubernetes pod (Google Cloud, region set at pod-provision time). This can only be pinned to UK/EU regions via Emergent Support / infra config — **not something the app code controls**. Also flag: any managed Mongo Atlas migration should be pinned to `LON` / `EU` regions.
+- **Section 7 · Sub-processors.** Anthropic (Claude via LiteLLM) processes prompts in US regions unless a UK/EU endpoint is negotiated. Stripe processes payment metadata in the US. Both are contractual sub-processors — list them explicitly in an appendix.
+- **Section 10 · International Transfers.** Any pipeline sending pupil-generated content to Anthropic requires an IDTA / SCC in place. No code-level enforcement exists today.
+- **Logo asset**: the image URL you dropped isn't accessible from my sandbox — upload the PNG/SVG to `/app/frontend/public/logo.png` (or paste it into the chat as an attachment) and I'll wire it into `GlobalNav` / `SideNav` / favicon in one pass.
+
+## Iteration 14 — SLT roles, teacher-only lessons → PPTX, cross-school auth hardening
+
+### Done
+- **Yusufm_1 = pro + lifetime** forced on every backend startup (`subscription_tier="pro"`, `subscription_lifetime=True`).
+- **SLT management** (`GET/POST/DELETE /api/school/slt`): school admins list SLT + teachers + students in their school, promote an existing teacher to SLT, or demote back to their original role. Whitelisted output fields — no MFA/DPA/subscription internals leak. Students cannot be jumped straight to SLT; must be invited as a teacher first.
+- **Only teachers may create lessons**: `POST /api/teacher/lessons` now requires `ROLE_TEACHER` (owner still bypasses). `PATCH /api/teacher/lessons/{id}` for teacher-editable AI-lesson plans (403 for other teachers). `GET /api/teacher/lessons/{id}/pptx` renders the lesson into an editable PowerPoint via python-pptx (title, objectives, starter, main activities, plenary, differentiation, success criteria, homework). Cross-school reads now 403 via `_require_lesson_read` helper.
+- **Stripe checkout** already integrated via `emergentintegrations` — verified `/api/billing/checkout` returns a Stripe URL + session_id when given `origin_url`.
+
+### Test coverage
+- Iteration 14 (backend-only): all 5 fixes verified + iteration_13 regression sweep re-run.
+
+## Iteration 15 — Multi-tenant infra pass
+
+### Done (backend)
+- **Roles**: added `ROLE_PARENT`. `ALL_ROLES` now includes owner/school_admin/teacher/student/parent/individual.
+- **Students-only privacy**: staff-only listings (`/school/slt`, `/school/classes`, `/teacher/lessons`, `/teacher/detentions`) already require ROLE_TEACHER/SCHOOL_ADMIN so students never see the roster. Documented on the endpoint block.
+- **Test accounts (owner-only)**: `POST /api/owner/test-accounts` mints a flagged user (`test_account:true`), `GET` lists, `DELETE` bulk-wipes.
+- **UK Curriculum collection**: `db.curriculum` seeded at startup with 42 rows spanning Primary (KS1+KS2) → Secondary (KS3+GCSE) → Sixth Form (A-Level) → University (Undergrad+Postgrad). Exposed via `GET /api/curriculum?stage=&key_stage=` — the frontend pickers can drop hardcoded lists and hit this instead.
+- **Timetable**: `GET /api/timetable`, `POST /api/timetable/entries` (recurring by `day_of_week`+`start_time`+`end_time`), `DELETE /api/timetable/entries/{id}`, `POST /api/timetable/overrides` for one-off cancellations/replacements.
+- **Detentions**: existing end-to-end flow, plus new `PATCH /api/teacher/detentions/{id}` with `status: attended|missed|issued`. Students still see only `/api/student/my-detentions`.
+- **Stripe**: pre-existing `emergentintegrations` checkout + webhook handler are live.
+- **Business dashboard**: `GET /api/owner/business/pricing` returns the exact tiers requested — 3 school bands (£3k / £8k / £15k) and 6 MAT bands (£60k → £1.5m).
+- **Public `/api/config`**: exposes support email + brand + current DPA version for frontends.
+
+### Done (frontend)
+- **Support-email banner** now appears at the very top of every page (public + authenticated) with `schoollearnsupport@pm.me` mailto.
+- **`/legal` page**: current UK GDPR Privacy Notice v2.0 + preserved legacy privacy-policy text side-by-side. Linked from the footer on every page.
+
+### Deliberately-noted follow-ups
+- **Frontend curriculum wiring**: subject pickers still read from `/app/frontend/src/lib/subjects.js` for offline resilience. Swap to `/api/curriculum` when ready.
+- **Email auto-sort**: inbound-email routing wasn't implemented — needs a Resend/SES inbound-webhook contract before code can be written.
+- **Timetable UI**: `/timetable` page still shows the demo grid; wiring it to `/api/timetable` is a small follow-up.
+
 ### Backlog / next
 - Real WAF + DDoS protection (infra, Cloudflare or similar).
 - Automated daily DB backups (configure MongoDB Atlas backup or scheduled `mongodump`).

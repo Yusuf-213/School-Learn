@@ -1,0 +1,48 @@
+{
+  "summary": "Follow-up verification of the 3 iteration_11 defects + full regression sweep. ALL 3 DEFECTS ARE FIXED AND VERIFIED LIVE. (1) GradeLevelSelect now derives group order from GRADE_LEVELS — [data-testid=dashboard-grade-select] renders 17 options (uk_reception + uk_y1..uk_y13 + uk_undergrad + uk_masters + uk_doctoral) for BOTH owner (Yusufm_1) and school_admin (Tester1), and select_option('uk_y7') succeeds and persists (dashboard subtitle updates to 'UK · Year 7 (KS3, age 11-12)'). NOTE: taxonomy has 17 entries, not 18 as the request stated — uk_reception..uk_doctoral is 17 values; all are present. (2) GlobalNav: nav-focus count = 0 on /contact, /pricing, /safety, /billing/success for owner, school_admin AND logged-out; no `Timer` token anywhere in GlobalNav.jsx; grep confirms zero '/focus' links across all of /app/frontend/src. (3) Landing hero eyebrow renders 'RECEPTION → UNIVERSITY' (CSS uppercase); no 'Preschool' anywhere. Google-session default: only 2 'high_school' strings remain in server.py (lines 512 + 587, both inside _grade_descriptor/paper_level_map legacy alias maps as designed); both /api/auth/session code paths (~395, ~1118) now use uk_y10. Regression: re-ran the full iteration_11 suite — 32/32 PASS (was 31/32); previously failing TestFocusRemoval::test_no_focus_links_anywhere_in_nav now passes. Added /app/backend/tests/test_iter12_fix_verification.py (15 tests, 13 pass). Frontend re-verified: 3 logins 200 + /auth/me consistent, DPA gate accept, sn-dreams visible for owner AND school_admin with sn-focus=0, /dreams renders with 0 error elements, /contact shows schoollearnsupport@pm.me. ONE NEW (pre-existing, not a regression) backend defect found: grade_level is not validated server-side.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PATCH /api/auth/profile", "issue": "No UK-only grade_level validation. PATCH {\"grade_level\":\"high_school\"} returns 200 and persists the legacy non-UK value on the user document (reproduced on tester@tester.org; value restored to uk_y10 by the test teardown). update_profile (server.py:477-483) blindly $sets any value in the {name, grade_level} allow-list. Iteration_11 only ever tested VALID UK values, so this gap was missed. A user stuck with a non-UK grade silently falls back to the uk_y10 descriptor in AI prompts and shows a raw slug in the UI (gradeLevelLabel returns the raw value when unknown), and GradeLevelSelect renders with no matching option (blank/first-option selection)."},
+      {"endpoint": "POST /api/auth/register", "issue": "Same gap: register with grade_level='middle_school' returns 200 and stores it (server.py:325 `req.grade_level or \"uk_y10\"` — no membership check). RegisterRequest.grade_level is a plain Optional[str]. Recommend a Pydantic Literal/validator or a shared UK_GRADE_LEVELS set validated in both register and update_profile."},
+      {"endpoint": "/api/focus/* (server.py ~890-905) + db.focus_sessions", "issue": "STILL PRESENT from iteration_11 — dead focus-session endpoints and collection with no frontend consumer. Not fixed this round; cosmetic/dead-code cleanup only."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/progress", "issues": ["STILL OPEN from iteration_11 (not in this round's scope): the 30-day retention window is never stated and /api/progress/export + /api/progress/reset are not reachable from the UI, so the DPA S11 'save a file before the monthly reset' right has no entry point."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter12_fix_verification.py",
+    "/app/backend/tests/test_iter11_uk_dpa_progress.py",
+    "/app/test_reports/pytest/iter12_results.xml",
+    "/app/test_reports/pytest/iter12_fixes.xml"
+  ],
+  "action_items": [
+    "MEDIUM: Validate grade_level server-side against the 17 UK values in BOTH POST /api/auth/register (server.py:325) and PATCH /api/auth/profile (server.py:479) — currently any string, including the retired 'high_school'/'middle_school', is accepted with 200.",
+    "LOW: components/GlobalNav.jsx no longer imports Timer, but /app/frontend/src/pages/Landing.jsx line 3 still imports `Timer` from @phosphor-icons/react and never uses it — remove the dead import.",
+    "LOW (carry-over): delete the dead /api/focus/* endpoints and db.focus_sessions collection.",
+    "LOW (carry-over): surface the 30-day retention window + export/reset controls on /progress.",
+    "DOCS: /app/memory/test_credentials.md is stale — it says 'Current DPA version 1.1' (actual 2.0) and lists 'Focus' as a Tester-visible page (removed)."
+  ],
+  "critical_code_review_comments": [
+    "The grade-taxonomy contract is enforced only in the frontend dropdown; the API accepts anything. Define one authoritative UK_GRADE_LEVELS set in server.py and use a Pydantic Literal/field_validator so register, PATCH profile and any future importer share it — this is the same class of drift bug as the iteration_11 GradeLevelSelect regression, just on the backend side.",
+    "GradeLevelSelect's new derived-order loop is correct and drift-proof; consider applying the same 'derive, never hardcode' rule to paper_level_map/_grade_descriptor which still enumerate grades by hand.",
+    "server.py is still 2909 lines — split DPA, retention, auth, promo and AI-prompt logic into routers.",
+    "SideNav and GlobalNav still duplicate role->menu logic (the /focus leak lived only in GlobalNav). Consolidate into one role-nav source of truth to prevent a repeat."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter12_fix_verification.py",
+    "/app/backend/tests/cleanup_iter12.py"
+  ],
+  "success_rate": {"backend": "94% (45/47: 32/32 iter11 regression + 13/15 iter12; the 2 failures are the grade_level validation gap)", "frontend": "100% (all 3 iteration_11 defects verified fixed; 14/14 live UI checks pass)"},
+  "seed_data_creation": "Two throwaway registrations test_badgrade_*@qa-test.org (probing register validation) — both deleted from Mongo. tester@tester.org grade_level was temporarily set to 'high_school' by the PATCH probe and has been restored to 'uk_y10' (verified in Mongo). No other data mutated.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Owner yusufm_1@outlook.com / The_Underdog (Yusufm_1); Co-owner khalida700@hotmail.co.uk / The_Underdog; Tester tester@tester.org / 123 (Tester1, school_admin). All three login 200.",
+  "context_for_next_testing_agent": "Login testids are login-email-input / login-password-input / login-submit-btn (NOT login-email). Login response field is `token`. Profile update endpoint is PATCH /api/auth/profile (NOT /api/profile). GRADE_LEVELS has 17 entries (not 18) — assert >=17. IMPORTANT Playwright gotcha: the Landing hero eyebrow is CSS `uppercase`, so page.inner_text('body') returns 'RECEPTION → UNIVERSITY' — a case-sensitive 'Reception' assertion will falsely fail; compare case-insensitively. Regression suites to re-run: tests/test_iter11_uk_dpa_progress.py (32) and tests/test_iter12_fix_verification.py (15). Only the 2 grade_level-validation tests should fail until the backend adds validation.",
+  "rca_of_the_issue": "All 3 iteration_11 defects are genuinely fixed. Verification evidence: (a) GradeLevelSelect.jsx now builds `order` by iterating GRADE_LEVELS and pushing unique g.group, so group renames can no longer drop options — live DOM shows 17 <option> values and select_option('uk_y7') resolves and persists via PATCH /api/auth/profile. (b) GlobalNav.jsx navForUser() no longer contains any /focus entry for owner/school_admin/teacher/student/individual, and `Timer` is absent from the import list; nav-focus and nav-focus-m counts are 0 on all 4 GlobalNav-rendering pages for every role tested. (c) Landing.jsx line 22 reads 'Reception → University'. NEW finding root cause: update_profile (server.py:477) and register (server.py:325) treat grade_level as a free-form string — the allow-list filters WHICH keys may be written but never WHAT values, so the retired 'high_school'/'middle_school' slugs are still writable through the public API even though the UI can no longer produce them."
+}

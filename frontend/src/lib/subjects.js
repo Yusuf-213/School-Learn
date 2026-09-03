@@ -1,64 +1,37 @@
 // Curated subject + topic taxonomy. AI generates the actual content on demand.
 
-// Grade levels grouped by region. Each entry has a "group" used for <optgroup>.
+// Grade levels — UK curriculum only, Year 1 through University.
 export const GRADE_LEVELS = [
-  // Early years (universal)
-  { value: "preschool", label: "Preschool (3–5)", group: "Early years", ages: "3-5" },
-  { value: "elementary", label: "Elementary / Primary (6–10)", group: "Early years", ages: "6-10" },
+  // Reception (kept for younger learners; Nursery/EYFS)
+  { value: "uk_reception", label: "UK · Reception (EYFS, age 4–5)", group: "Primary", ages: "4-5" },
 
-  // Generic ISCED — works for any country
-  { value: "lower_secondary", label: "Lower Secondary · ISCED 2 (11–15)", group: "Generic / ISCED", ages: "11-15" },
-  { value: "upper_secondary", label: "Upper Secondary · ISCED 3 (15–18)", group: "Generic / ISCED", ages: "15-18" },
+  // Key Stage 1
+  { value: "uk_y1",  label: "UK · Year 1 (KS1, age 5–6)",   group: "Primary", ages: "5-6" },
+  { value: "uk_y2",  label: "UK · Year 2 (KS1, age 6–7)",   group: "Primary", ages: "6-7" },
 
-  // United Kingdom (KS3 → A-Levels)
-  { value: "uk_y7", label: "UK · Year 7 (KS3, age 11–12)", group: "United Kingdom", ages: "11-12" },
-  { value: "uk_y8", label: "UK · Year 8 (KS3, age 12–13)", group: "United Kingdom", ages: "12-13" },
-  { value: "uk_y9", label: "UK · Year 9 (KS3, age 13–14)", group: "United Kingdom", ages: "13-14" },
-  { value: "uk_y10", label: "UK · Year 10 (GCSE, age 14–15)", group: "United Kingdom", ages: "14-15" },
-  { value: "uk_y11", label: "UK · Year 11 (GCSE, age 15–16)", group: "United Kingdom", ages: "15-16" },
-  { value: "uk_y12", label: "UK · Year 12 (AS / Lower 6th, age 16–17)", group: "United Kingdom", ages: "16-17" },
-  { value: "uk_y13", label: "UK · Year 13 (A2 / Upper 6th, age 17–18)", group: "United Kingdom", ages: "17-18" },
+  // Key Stage 2
+  { value: "uk_y3",  label: "UK · Year 3 (KS2, age 7–8)",   group: "Primary", ages: "7-8" },
+  { value: "uk_y4",  label: "UK · Year 4 (KS2, age 8–9)",   group: "Primary", ages: "8-9" },
+  { value: "uk_y5",  label: "UK · Year 5 (KS2, age 9–10)",  group: "Primary", ages: "9-10" },
+  { value: "uk_y6",  label: "UK · Year 6 (KS2, age 10–11 · SATs)", group: "Primary", ages: "10-11" },
 
-  // United States (High school)
-  { value: "us_g9", label: "US · Grade 9 (Freshman, age 14–15)", group: "United States", ages: "14-15" },
-  { value: "us_g10", label: "US · Grade 10 (Sophomore, age 15–16)", group: "United States", ages: "15-16" },
-  { value: "us_g11", label: "US · Grade 11 (Junior, age 16–17)", group: "United States", ages: "16-17" },
-  { value: "us_g12", label: "US · Grade 12 (Senior, age 17–18)", group: "United States", ages: "17-18" },
+  // Key Stage 3
+  { value: "uk_y7",  label: "UK · Year 7 (KS3, age 11–12)", group: "Secondary", ages: "11-12" },
+  { value: "uk_y8",  label: "UK · Year 8 (KS3, age 12–13)", group: "Secondary", ages: "12-13" },
+  { value: "uk_y9",  label: "UK · Year 9 (KS3, age 13–14)", group: "Secondary", ages: "13-14" },
 
-  // Canada
-  { value: "ca_g9", label: "Canada · Grade 9 (age 14–15)", group: "Canada", ages: "14-15" },
-  { value: "ca_g10", label: "Canada · Grade 10 (age 15–16)", group: "Canada", ages: "15-16" },
-  { value: "ca_g11", label: "Canada · Grade 11 (age 16–17)", group: "Canada", ages: "16-17" },
-  { value: "ca_g12", label: "Canada · Grade 12 (age 17–18)", group: "Canada", ages: "17-18" },
+  // Key Stage 4 (GCSE)
+  { value: "uk_y10", label: "UK · Year 10 (GCSE, age 14–15)", group: "GCSE", ages: "14-15" },
+  { value: "uk_y11", label: "UK · Year 11 (GCSE, age 15–16)", group: "GCSE", ages: "15-16" },
 
-  // Australia
-  { value: "au_y7", label: "Australia · Year 7 (age 12–13)", group: "Australia", ages: "12-13" },
-  { value: "au_y8", label: "Australia · Year 8 (age 13–14)", group: "Australia", ages: "13-14" },
-  { value: "au_y9", label: "Australia · Year 9 (age 14–15)", group: "Australia", ages: "14-15" },
-  { value: "au_y10", label: "Australia · Year 10 (age 15–16)", group: "Australia", ages: "15-16" },
-  { value: "au_y11", label: "Australia · Year 11 (age 16–17)", group: "Australia", ages: "16-17" },
-  { value: "au_y12", label: "Australia · Year 12 (age 17–18)", group: "Australia", ages: "17-18" },
-
-  // Germany
-  { value: "de_sek1", label: "Germany · Sekundarstufe I (Klasse 5–10, 10–15)", group: "Germany", ages: "10-15" },
-  { value: "de_sek2", label: "Germany · Sekundarstufe II (Klasse 11–13, 15–19)", group: "Germany", ages: "15-19" },
-
-  // Japan
-  { value: "jp_jhs", label: "Japan · Junior High 中学校 (age 12–15)", group: "Japan", ages: "12-15" },
-  { value: "jp_shs", label: "Japan · Senior High 高校 (age 15–18)", group: "Japan", ages: "15-18" },
-
-  // China
-  { value: "cn_jhs", label: "China · Junior High 初中 (age 12–15)", group: "China", ages: "12-15" },
-  { value: "cn_shs", label: "China · Senior High 高中 (age 15–18)", group: "China", ages: "15-18" },
-
-  // Legacy / catch-all (kept for backwards compatibility with existing users)
-  { value: "middle_school", label: "Middle School (11–13)", group: "Other", ages: "11-13" },
-  { value: "high_school", label: "High School (14–18)", group: "Other", ages: "14-18" },
+  // Key Stage 5 (A-Level / Sixth Form)
+  { value: "uk_y12", label: "UK · Year 12 (AS / Lower 6th, age 16–17)", group: "Sixth Form", ages: "16-17" },
+  { value: "uk_y13", label: "UK · Year 13 (A2 / Upper 6th, age 17–18)", group: "Sixth Form", ages: "17-18" },
 
   // Higher education
-  { value: "undergrad", label: "University · Undergraduate", group: "University", ages: "18+" },
-  { value: "grad", label: "University · Master's", group: "University", ages: "21+" },
-  { value: "phd", label: "University · Doctoral research", group: "University", ages: "24+" },
+  { value: "uk_undergrad", label: "University · Undergraduate",         group: "University", ages: "18+" },
+  { value: "uk_masters",   label: "University · Master's",              group: "University", ages: "21+" },
+  { value: "uk_doctoral",  label: "University · Doctoral / Research",   group: "University", ages: "24+" },
 ];
 
 export function gradeLevelLabel(value) {
@@ -76,10 +49,10 @@ export function gradeLevelsGrouped() {
 
 export const EXAM_BOARDS = [
   { value: "generic", label: "Generic (mock)" },
-  { value: "aqa", label: "AQA (UK)" },
-  { value: "edexcel", label: "Edexcel (UK)" },
-  { value: "ocr", label: "OCR (UK)" },
-  { value: "ib", label: "International Baccalaureate" },
+  { value: "aqa", label: "AQA" },
+  { value: "edexcel", label: "Edexcel / Pearson" },
+  { value: "ocr", label: "OCR" },
+  { value: "wjec", label: "WJEC / Eduqas" },
   { value: "cie", label: "Cambridge International (CIE)" },
 ];
 

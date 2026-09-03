@@ -64,6 +64,14 @@ export function AuthProvider({ children }) {
   const loginWithEmail = async (email, password) => {
     const { data } = await api.post("/auth/login", { email, password });
     localStorage.setItem("token", data.token);
+    // Persist the user AND the token together so subsequent requests + refreshes never mismatch.
+    setUser(data.user);
+    return data.user;
+  };
+
+  const loginWithIdentifier = async (identifier, password) => {
+    const { data } = await api.post("/auth/login_username", { identifier, password });
+    localStorage.setItem("token", data.token);
     setUser(data.user);
     return data.user;
   };
@@ -82,7 +90,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, loginWithEmail, registerWithEmail, logout, refreshUser: checkAuth, setUser }}>
+    <AuthContext.Provider value={{ user, loading, loginWithEmail, loginWithIdentifier, registerWithEmail, logout, refreshUser: checkAuth, setUser }}>
       {children}
     </AuthContext.Provider>
   );

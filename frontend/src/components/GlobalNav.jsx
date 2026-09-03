@@ -1,6 +1,6 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { GraduationCap, House, BookOpen, Timer, ChartLine, CreditCard, Question, SignIn, List, X, SignOut, ChalkboardTeacher, Compass, Chat, Crown, Trophy, ShieldCheck, Bank } from "@phosphor-icons/react";
+import { GraduationCap, House, BookOpen, ChartLine, CreditCard, Question, SignIn, List, X, SignOut, ChalkboardTeacher, Compass, Chat, Crown, Trophy, ShieldCheck, Bank } from "@phosphor-icons/react";
 import { useState } from "react";
 import AccessibilityMenu from "@/components/AccessibilityMenu";
 
@@ -34,7 +34,6 @@ function navForUser(user) {
     return [
       ...base,
       { to: "/teacher", label: "Teach", icon: ChalkboardTeacher, testid: "nav-teacher" },
-      { to: "/focus", label: "Focus", icon: Timer, testid: "nav-focus" },
       { to: "/suggestions", label: "Feedback", icon: Chat, testid: "nav-suggestions" },
       { to: "/pricing", label: "Plans", icon: CreditCard, testid: "nav-plans" },
     ];
@@ -43,14 +42,12 @@ function navForUser(user) {
     return [
       ...base,
       { to: "/my-record", label: "My record", icon: Trophy, testid: "nav-myrecord" },
-      { to: "/focus", label: "Focus", icon: Timer, testid: "nav-focus" },
       { to: "/suggestions", label: "Suggestions", icon: Chat, testid: "nav-suggestions" },
     ];
   }
   // individual
   return [
     ...base,
-    { to: "/focus", label: "Focus", icon: Timer, testid: "nav-focus" },
     { to: "/progress", label: "Progress", icon: ChartLine, testid: "nav-progress" },
     { to: "/suggestions", label: "Feedback", icon: Chat, testid: "nav-suggestions" },
     { to: "/pricing", label: "Plans", icon: CreditCard, testid: "nav-plans" },

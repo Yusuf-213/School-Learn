@@ -7,7 +7,7 @@ import { CheckCircle, ArrowRight, Trophy } from "@phosphor-icons/react";
 
 export default function Progress() {
   const [items, setItems] = useState([]);
-  const [stats, setStats] = useState({ topics_started: 0, topics_completed: 0, focus_minutes: 0, focus_sessions_completed: 0 });
+  const [stats, setStats] = useState({ topics_started: 0, topics_completed: 0 });
 
   useEffect(() => {
     (async () => {
@@ -27,11 +27,9 @@ export default function Progress() {
           <h1 className="font-display font-black text-4xl sm:text-5xl tracking-tight">Your journey so far.</h1>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <Stat label="Topics started" value={stats.topics_started} bg="bg-mint" />
           <Stat label="Topics completed" value={stats.topics_completed} bg="bg-butter" />
-          <Stat label="Focus sessions" value={stats.focus_sessions_completed} bg="bg-lavender" />
-          <Stat label="Focus minutes" value={stats.focus_minutes} bg="bg-peach" />
         </div>
 
         {items.length === 0 ? (
