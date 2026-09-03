@@ -4,7 +4,7 @@ import AppLayout from "@/components/AppLayout";
 import { findSubject, findTopic, gradeLevelLabel, EXAM_BOARDS } from "@/lib/subjects";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
-import { ArrowLeft, Sparkle, Lightbulb, Cards, Question, ChatCircleDots, PaperPlaneTilt, ArrowRight, CheckCircle, XCircle, ArrowsClockwise, FileText, Printer, Prohibit } from "@phosphor-icons/react";
+import { ArrowLeft, Sparkle, Lightbulb, Cards, Question, ChatCircleDots, PaperPlaneTilt, ArrowRight, CheckCircle, XCircle, ArrowsClockwise, FileText, Printer, Prohibit, Image as ImageIcon, X, Clock } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const TABS = [
@@ -27,6 +27,25 @@ export default function Topic() {
   const [examBoard, setExamBoard] = useState("generic");
   const [allowTutor, setAllowTutor] = useState(true);         // toggle when generating assessments
   const [assessmentLockTutor, setAssessmentLockTutor] = useState(false); // true if the last generated paper/quiz forbids tutor
+  const [lockedUntil, setLockedUntil] = useState("");         // datetime-local string chosen by teacher/student in the form
+  const [activeLockUntilIso, setActiveLockUntilIso] = useState(null); // ISO string returned by backend when tutor is currently locked
+  const [now, setNow] = useState(Date.now());
+
+  // Ticker so the countdown updates every second and auto-unlocks
+  useEffect(() => {
+    if (!assessmentLockTutor || !activeLockUntilIso) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [assessmentLockTutor, activeLockUntilIso]);
+
+  useEffect(() => {
+    if (!assessmentLockTutor || !activeLockUntilIso) return;
+    if (new Date(activeLockUntilIso).getTime() <= now) {
+      setAssessmentLockTutor(false);
+      setActiveLockUntilIso(null);
+      toast.success("AI tutor is now unlocked for this assessment.");
+    }
+  }, [now, assessmentLockTutor, activeLockUntilIso]);
 
   if (!subject || !topic) {
     return (
@@ -52,12 +71,18 @@ export default function Topic() {
       if (type === "paper" || type === "quiz") {
         payload.exam_board = examBoard;
         payload.allow_tutor = allowTutor;
+        if (!allowTutor && lockedUntil) {
+          // datetime-local value is local time — convert to ISO (UTC) so backend stores it safely
+          payload.tutor_locked_until = new Date(lockedUntil).toISOString();
+        }
       }
       const { data } = await api.post("/ai/generate", payload);
       setContent((prev) => ({ ...prev, [type]: data.content }));
       if (type === "paper" || type === "quiz") {
         const locked = data.allow_tutor === false;
         setAssessmentLockTutor(locked);
+        setActiveLockUntilIso(locked ? (data.tutor_locked_until || null) : null);
+        setNow(Date.now());
         if (locked && activeTab === "tutor") setActiveTab(type);
       }
       // Track progress
@@ -119,16 +144,17 @@ export default function Topic() {
         <div className="flex flex-wrap gap-2">
           {TABS.map((t) => {
             const tutorLocked = t.id === "tutor" && assessmentLockTutor;
+            const timerSuffix = tutorLocked && activeLockUntilIso ? ` · ${formatCountdown(activeLockUntilIso, now)}` : (tutorLocked ? " · locked" : "");
             return (
               <button
                 key={t.id}
                 onClick={() => { if (!tutorLocked) setActiveTab(t.id); }}
                 disabled={tutorLocked}
-                title={tutorLocked ? "AI tutor is disabled for the active assessment" : undefined}
+                title={tutorLocked ? (activeLockUntilIso ? `AI tutor unlocks at ${new Date(activeLockUntilIso).toLocaleString()}` : "AI tutor is disabled for the active assessment") : undefined}
                 data-testid={`tab-${t.id}`}
                 className={`brutal-btn text-sm inline-flex items-center gap-2 ${activeTab === t.id ? "bg-ink text-white" : "bg-white hover:bg-butter"} ${tutorLocked ? "opacity-50 cursor-not-allowed" : ""}`}
               >
-                <t.icon size={16} weight="bold" /> {t.label}{tutorLocked ? " · locked" : ""}
+                <t.icon size={16} weight="bold" /> {t.label}{timerSuffix}
               </button>
             );
           })}
@@ -154,12 +180,16 @@ export default function Topic() {
               setExamBoard={setExamBoard}
               allowTutor={allowTutor}
               setAllowTutor={setAllowTutor}
+              lockedUntil={lockedUntil}
+              setLockedUntil={setLockedUntil}
               assessmentLockTutor={assessmentLockTutor}
+              activeLockUntilIso={activeLockUntilIso}
+              now={now}
             />
           )}
           {activeTab === "tutor" && (
             assessmentLockTutor
-              ? <TutorLockedNotice />
+              ? <TutorLockedNotice activeLockUntilIso={activeLockUntilIso} now={now} />
               : <TutorView subject={subject.name} topic={topic.name} grade_level={user?.grade_level || "high_school"} />
           )}
         </div>
@@ -353,7 +383,20 @@ function FlashcardsView({ data, onGenerate, loading }) {
   );
 }
 
-function PaperView({ data, onGenerate, loading, examBoard, setExamBoard, allowTutor, setAllowTutor, assessmentLockTutor }) {
+function formatCountdown(iso, nowMs) {
+  if (!iso) return "";
+  const diff = new Date(iso).getTime() - (nowMs || Date.now());
+  if (diff <= 0) return "unlocked";
+  const s = Math.floor(diff / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `unlocks in ${h}h ${m}m`;
+  if (m > 0) return `unlocks in ${m}m ${sec}s`;
+  return `unlocks in ${sec}s`;
+}
+
+function PaperView({ data, onGenerate, loading, examBoard, setExamBoard, allowTutor, setAllowTutor, lockedUntil, setLockedUntil, assessmentLockTutor, activeLockUntilIso, now }) {
   return (
     <div className="space-y-4" data-testid="paper-content">
       <div className="flex flex-wrap items-end gap-3 border-b-2 border-ink pb-4">
@@ -378,6 +421,21 @@ function PaperView({ data, onGenerate, loading, examBoard, setExamBoard, allowTu
           <span className="font-bold">Allow AI tutor</span>
           <span className="text-xs text-[#4A4A4A]">during this assessment</span>
         </label>
+        {!allowTutor && (
+          <label className="block" data-testid="paper-lock-until-wrap">
+            <span className="text-xs uppercase tracking-[0.2em] font-bold flex items-center gap-1">
+              <Clock size={12} weight="bold" /> Auto-unlock at (optional)
+            </span>
+            <input
+              type="datetime-local"
+              value={lockedUntil || ""}
+              onChange={(e) => setLockedUntil(e.target.value)}
+              className="mt-2 brutal-input bg-white py-2 px-3 text-sm"
+              data-testid="paper-lock-until-input"
+              min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+            />
+          </label>
+        )}
         <button
           onClick={onGenerate} disabled={loading}
           data-testid="paper-generate-btn"
@@ -394,7 +452,15 @@ function PaperView({ data, onGenerate, loading, examBoard, setExamBoard, allowTu
 
       {data && assessmentLockTutor && (
         <div className="brutal-card p-3 bg-peach text-sm inline-flex items-center gap-2" data-testid="paper-tutor-locked-banner">
-          <Prohibit size={16} weight="bold" /> AI tutor is <strong>locked</strong> for this assessment. Regenerate with "Allow AI tutor" ticked to enable it.
+          <Prohibit size={16} weight="bold" />
+          AI tutor is <strong>locked</strong> for this assessment
+          {activeLockUntilIso ? (
+            <>
+              — {formatCountdown(activeLockUntilIso, now)} (at {new Date(activeLockUntilIso).toLocaleString()}).
+            </>
+          ) : (
+            <> — regenerate with "Allow AI tutor" ticked to enable it.</>
+          )}
         </div>
       )}
 
@@ -459,39 +525,86 @@ function PaperView({ data, onGenerate, loading, examBoard, setExamBoard, allowTu
   );
 }
 
-function TutorLockedNotice() {
+function TutorLockedNotice({ activeLockUntilIso, now }) {
+  const untilLabel = activeLockUntilIso ? new Date(activeLockUntilIso).toLocaleString() : null;
+  const countdown = activeLockUntilIso ? formatCountdown(activeLockUntilIso, now) : null;
   return (
     <div className="flex flex-col items-center justify-center text-center py-12" data-testid="tutor-locked">
       <Prohibit size={40} weight="duotone" />
       <div className="font-display font-bold text-2xl mt-4">AI Tutor is locked</div>
       <p className="text-[#4A4A4A] text-sm mt-2 max-w-md">
         Your current assessment on this topic was generated with the AI tutor <strong>disabled</strong>.
-        Regenerate the paper with "Allow AI tutor" turned on to unlock it.
+        {untilLabel
+          ? <> It will <strong>auto-unlock</strong> at {untilLabel}.</>
+          : <> Regenerate the paper with "Allow AI tutor" turned on to unlock it.</>}
       </p>
+      {countdown && (
+        <div className="mt-4 brutal-card px-4 py-2 bg-butter inline-flex items-center gap-2" data-testid="tutor-lock-countdown">
+          <Clock size={16} weight="bold" />
+          <span className="font-mono font-bold">{countdown}</span>
+        </div>
+      )}
     </div>
   );
 }
 
-function TutorView({ subject, topic, grade_level }) {  const [messages, setMessages] = useState([]);
+function TutorView({ subject, topic, grade_level }) {
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [sessionId, setSessionId] = useState(null);
+  const [images, setImages] = useState([]);
   const scrollRef = useRef(null);
+  const fileRef = useRef(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, loading]);
 
+  const fileToDataUrl = (file) => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+
+  const onPaste = async (e) => {
+    const out = [];
+    for (const it of (e.clipboardData?.items || [])) {
+      if (it.type && it.type.startsWith("image/")) {
+        const f = it.getAsFile();
+        if (f) out.push(await fileToDataUrl(f));
+        if (out.length >= 4) break;
+      }
+    }
+    if (out.length) {
+      e.preventDefault();
+      setImages((cur) => [...cur, ...out].slice(0, 4));
+      toast.success(`${out.length} image${out.length > 1 ? "s" : ""} attached`);
+    }
+  };
+
+  const pickFiles = async (files) => {
+    const arr = Array.from(files || []).filter((f) => f.type.startsWith("image/"));
+    const urls = await Promise.all(arr.map(fileToDataUrl));
+    setImages((cur) => [...cur, ...urls].slice(0, 4));
+  };
+
   const send = async (e) => {
     e?.preventDefault();
-    if (!input.trim() || loading) return;
-    const text = input;
+    const hasText = input.trim().length > 0;
+    const hasImgs = images.length > 0;
+    if ((!hasText && !hasImgs) || loading) return;
+    const text = input || "(image attached)";
+    const imgsForTurn = images;
     setInput("");
-    setMessages((m) => [...m, { role: "user", text }]);
+    setImages([]);
+    setMessages((m) => [...m, { role: "user", text, images: imgsForTurn }]);
     setLoading(true);
     try {
       const { data } = await api.post("/ai/chat", {
         subject, topic, grade_level, message: text, session_id: sessionId,
+        images: imgsForTurn.length ? imgsForTurn : null,
       });
       setSessionId(data.session_id);
       setMessages((m) => [...m, { role: "assistant", text: data.response }]);
@@ -503,19 +616,26 @@ function TutorView({ subject, topic, grade_level }) {  const [messages, setMessa
   };
 
   return (
-    <div className="flex flex-col h-[520px]" data-testid="tutor-content">
+    <div className="flex flex-col h-[560px]" data-testid="tutor-content">
       <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-3 pb-3">
         {messages.length === 0 && (
           <div className="text-center text-[#4A4A4A] py-12">
             <ChatCircleDots size={32} weight="duotone" className="mx-auto mb-3" />
             <div className="font-display font-bold text-xl text-ink">Ask anything about {topic}.</div>
-            <div className="text-sm mt-1">Examples: "Explain like I'm 12", "Give me a worked example", "Why does this matter?"</div>
+            <div className="text-sm mt-1">Type a question or paste a screenshot (Ctrl/Cmd + V).</div>
           </div>
         )}
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[80%] border-2 border-ink rounded-md p-3 ${m.role === "user" ? "bg-ink text-white" : "bg-butter"}`}>
               <div className="text-xs uppercase tracking-[0.2em] font-bold mb-1 opacity-70">{m.role === "user" ? "You" : "Tutor"}</div>
+              {m.images?.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {m.images.map((src, k) => (
+                    <img key={k} src={src} alt={`tutor-img-${k}`} className="h-20 w-20 object-cover border-2 border-white/40 rounded-md" />
+                  ))}
+                </div>
+              )}
               <div className="whitespace-pre-wrap text-sm leading-relaxed">{m.text}</div>
             </div>
           </div>
@@ -524,14 +644,53 @@ function TutorView({ subject, topic, grade_level }) {  const [messages, setMessa
           <div className="flex"><div className="border-2 border-ink rounded-md p-3 bg-butter text-sm font-mono">Thinking…</div></div>
         )}
       </div>
+
+      {images.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2" data-testid="tutor-image-chips">
+          {images.map((src, i) => (
+            <div key={i} className="relative">
+              <img src={src} alt={`attach-${i}`} className="h-14 w-14 object-cover border-2 border-ink rounded-md" data-testid={`tutor-image-${i}`} />
+              <button
+                type="button"
+                onClick={() => setImages((cur) => cur.filter((_, k) => k !== i))}
+                className="absolute -top-2 -right-2 bg-ink text-white rounded-full border-2 border-white p-0.5 hover:bg-focus"
+                data-testid={`tutor-image-remove-${i}`}
+                aria-label="Remove image"
+              >
+                <X size={12} weight="bold" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       <form onSubmit={send} className="flex gap-2 border-t-2 border-ink pt-3">
         <input
           data-testid="tutor-input"
           value={input} onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask your tutor…"
+          onPaste={onPaste}
+          placeholder="Ask your tutor — or paste a screenshot…"
           className="brutal-input flex-1"
         />
-        <button data-testid="tutor-send" type="submit" disabled={loading || !input.trim()}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => { pickFiles(e.target.files); e.target.value = ""; }}
+          data-testid="tutor-file-input"
+        />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          className="brutal-btn bg-white hover:bg-butter"
+          title="Attach image"
+          data-testid="tutor-attach-btn"
+        >
+          <ImageIcon size={16} weight="bold" />
+        </button>
+        <button data-testid="tutor-send" type="submit" disabled={loading || (!input.trim() && images.length === 0)}
           className="brutal-btn bg-ink text-white inline-flex items-center gap-2 disabled:opacity-60">
           <PaperPlaneTilt size={16} weight="bold" /> Send
         </button>

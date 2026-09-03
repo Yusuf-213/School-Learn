@@ -136,6 +136,7 @@ class AIGenerateRequest(BaseModel):
     content_type: Literal["summary", "quiz", "flashcards", "explanation", "paper"]
     exam_board: Optional[str] = None  # 'aqa','edexcel','ocr','ib','cie','generic'
     allow_tutor: Optional[bool] = True  # If False, AI tutor is disabled while the student sits this assessment
+    tutor_locked_until: Optional[str] = None  # ISO datetime — when set with allow_tutor=false, tutor auto-unlocks after this time
 
 class CheckoutCreateRequest(BaseModel):
     plan_id: Literal["basic", "standard", "pro", "school_small", "school_medium", "school_large", "mat_1_5", "mat_5_10", "mat_10_30", "mat_30_50", "mat_50_80", "mat_80_100"]
@@ -765,11 +766,17 @@ async def ai_generate(req: AIGenerateRequest, current=Depends(get_current_user))
         "content_type": req.content_type,
         "exam_board": req.exam_board,
         "allow_tutor": bool(req.allow_tutor) if req.content_type in ("paper", "quiz") else True,
+        "tutor_locked_until": (req.tutor_locked_until if (req.content_type in ("paper", "quiz") and not req.allow_tutor and req.tutor_locked_until) else None),
         "content": data,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.generated_content.insert_one(doc)
-    return {"content_type": req.content_type, "content": data, "allow_tutor": doc["allow_tutor"]}
+    return {
+        "content_type": req.content_type,
+        "content": data,
+        "allow_tutor": doc["allow_tutor"],
+        "tutor_locked_until": doc["tutor_locked_until"],
+    }
 
 @api_router.post("/ai/chat")
 async def ai_chat(req: AIChatRequest, current=Depends(get_current_user)):

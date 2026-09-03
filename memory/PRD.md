@@ -243,3 +243,28 @@
 - P2: Refactor `server.py` (~3.5k lines) into modular routers.
 - P2: Deep AI curriculum-aware prompt mapping for Dreams feature.
 - P2: Extend paste-images support to the in-topic `TutorView` (subject/topic chat) — currently only Help.jsx supports it.
+
+
+## Iteration 19 — In-topic Tutor multimodal + Assessment auto-unlock timer — 2026-02-03
+
+### Done
+**In-topic AI Tutor accepts pasted screenshots**
+- Extended `TutorView` (Topic.jsx) with the same paste/attach behaviour as Homework Helper: clipboard image detection, "Attach image" button, image chips with remove, and image previews in the chat thread.
+- `POST /api/ai/chat` already accepted `images`; end-to-end verified — Claude describes uploaded images and answers about them in-context of the current subject/topic.
+
+**Assessment auto-unlock timer**
+- Backend: added `tutor_locked_until: Optional[str]` to `AIGenerateRequest`. Only stored when `content_type ∈ {paper, quiz}` and `allow_tutor=false`. Returned to the client on the generate response and persisted in `generated_content`.
+- Frontend Paper form: when "Allow AI tutor" is unticked, a **"Auto-unlock at (optional)"** `datetime-local` input appears. `min` is one minute in the future to prevent past values.
+- Locked banner + tutor tab now show a live countdown ("unlocks in 44m 31s"); a 1-second ticker auto-unlocks the tutor client-side when the unlock time passes and shows a toast confirmation.
+- `TutorLockedNotice` displays the target local timestamp and a monospace countdown pill when a `tutor_locked_until` is set.
+
+### Verified
+- `curl` POST `/api/ai/generate` with `allow_tutor:false, tutor_locked_until:<ISO>` → response echoes both fields and doc is stored.
+- Multimodal `/api/ai/chat` responds referencing the attached image.
+- Screenshots confirm: Practice Paper shows Exam board + Allow-tutor checkbox + "Auto-unlock at" datetime input + Generate; AI Tutor tab shows the new paste-a-screenshot placeholder and paperclip button.
+
+### Backlog (unchanged priority)
+- P1 verify: Email Auto-sort webhook → Owner unrouted inbox.
+- P2: Refactor `server.py` (~3.5k lines) into modular routers.
+- P2: Deep AI curriculum-aware prompt mapping for Dreams feature.
+- P2: Show teachers a MAT-wide "locked assessments" dashboard summarising all currently-locked papers + who set them.
