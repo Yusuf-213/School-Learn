@@ -210,3 +210,36 @@
 - P1 verify: Email Auto-sort webhook → Owner unrouted inbox.
 - P2: Refactor `server.py` (>3100 lines) into modular routers.
 - P2: Deep AI curriculum-aware prompt mapping for Dreams feature.
+
+
+## Iteration 18 — Multimodal AI Tutor + Assessment tutor lock + PPTX verified — 2026-02-03
+
+### Done
+**AI Tutor: paste / upload images (multimodal)**
+- Added `images: List[str]` to `HomeworkHelpRequest` and `AIChatRequest` (accepts raw base64 or `data:image/…;base64,…` URLs).
+- New `_build_user_message()` helper wraps images as `ImageContent(image_base64=…)` and passes them to Claude Sonnet 4.5 via `emergentintegrations`.
+- `/help` (Help.jsx): paste-from-clipboard handler on both first-turn and follow-up inputs, "Attach image" button, live image chips with remove buttons, and an image preview in the chat thread.
+- Verified end-to-end: Claude correctly extracted "2x + 3 = 11, find x" from an attached PIL-generated PNG and began Socratic tutoring.
+
+**PowerPoint verified working**
+- `/api/teacher/lessons/{lesson_id}/pptx` returns a valid 46 KB `.pptx` (HTTP 200) with title, objectives, starter, main, plenary, differentiation, success criteria, and homework slides.
+- Frontend "Make PowerPoint" button (Teacher.jsx) uses `responseType: "blob"` + Content-Disposition filename → confirmed downloads a proper file.
+
+**Assessment: teacher/student can toggle AI-tutor availability**
+- Added `allow_tutor: bool = True` to `AIGenerateRequest` (only meaningful for `content_type in {paper, quiz}`); stored on `generated_content` and returned to the client.
+- Topic.jsx "Practice Paper" tab: new "Allow AI tutor · during this assessment" checkbox next to Exam board.
+- If the last generated paper/quiz has `allow_tutor=false`, the AI Tutor tab is **disabled** ("· locked" label + tooltip) and clicking it shows a `<TutorLockedNotice />` explanation. A peach banner also appears on the Paper view confirming the lock.
+- Regenerating with the checkbox re-ticked immediately unlocks the tutor.
+
+### Verified
+- Curl POST `/api/ai/generate` with `allow_tutor:false` → response includes `allow_tutor: false`.
+- Curl POST `/api/ai/help` with real PNG in `images` → Claude tutors on the image content.
+- Curl GET `/api/teacher/lessons/<id>/pptx` → 46 KB pptx (200).
+- Screenshot `/help` — Attach image button + paste hint visible.
+- Screenshot `/subjects/mathematics/topic/algebra` — Practice Paper tab shows exam-board select, "Allow AI tutor" checkbox, and Generate paper button.
+
+### Backlog (unchanged priority)
+- P1 verify: Email Auto-sort webhook → Owner unrouted inbox.
+- P2: Refactor `server.py` (~3.5k lines) into modular routers.
+- P2: Deep AI curriculum-aware prompt mapping for Dreams feature.
+- P2: Extend paste-images support to the in-topic `TutorView` (subject/topic chat) — currently only Help.jsx supports it.

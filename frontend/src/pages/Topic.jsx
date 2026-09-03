@@ -4,7 +4,7 @@ import AppLayout from "@/components/AppLayout";
 import { findSubject, findTopic, gradeLevelLabel, EXAM_BOARDS } from "@/lib/subjects";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
-import { ArrowLeft, Sparkle, Lightbulb, Cards, Question, ChatCircleDots, PaperPlaneTilt, ArrowRight, CheckCircle, XCircle, ArrowsClockwise, FileText, Printer } from "@phosphor-icons/react";
+import { ArrowLeft, Sparkle, Lightbulb, Cards, Question, ChatCircleDots, PaperPlaneTilt, ArrowRight, CheckCircle, XCircle, ArrowsClockwise, FileText, Printer, Prohibit } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const TABS = [
@@ -25,6 +25,8 @@ export default function Topic() {
   const [content, setContent] = useState({});
   const [loading, setLoading] = useState(false);
   const [examBoard, setExamBoard] = useState("generic");
+  const [allowTutor, setAllowTutor] = useState(true);         // toggle when generating assessments
+  const [assessmentLockTutor, setAssessmentLockTutor] = useState(false); // true if the last generated paper/quiz forbids tutor
 
   if (!subject || !topic) {
     return (
@@ -40,14 +42,24 @@ export default function Topic() {
   const generate = async (type) => {
     setLoading(true);
     try {
-      const { data } = await api.post("/ai/generate", {
+      const payload = {
         subject: subject.name,
         topic: topic.name,
         sub_topic: subTopic || null,
         grade_level: user?.grade_level || "high_school",
         content_type: type,
-      });
+      };
+      if (type === "paper" || type === "quiz") {
+        payload.exam_board = examBoard;
+        payload.allow_tutor = allowTutor;
+      }
+      const { data } = await api.post("/ai/generate", payload);
       setContent((prev) => ({ ...prev, [type]: data.content }));
+      if (type === "paper" || type === "quiz") {
+        const locked = data.allow_tutor === false;
+        setAssessmentLockTutor(locked);
+        if (locked && activeTab === "tutor") setActiveTab(type);
+      }
       // Track progress
       api.post("/progress", { subject: subjectId, topic: topicId, completed: false }).catch(() => {});
     } catch (e) {
@@ -105,16 +117,21 @@ export default function Topic() {
 
         {/* Tabs */}
         <div className="flex flex-wrap gap-2">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setActiveTab(t.id)}
-              data-testid={`tab-${t.id}`}
-              className={`brutal-btn text-sm inline-flex items-center gap-2 ${activeTab === t.id ? "bg-ink text-white" : "bg-white hover:bg-butter"}`}
-            >
-              <t.icon size={16} weight="bold" /> {t.label}
-            </button>
-          ))}
+          {TABS.map((t) => {
+            const tutorLocked = t.id === "tutor" && assessmentLockTutor;
+            return (
+              <button
+                key={t.id}
+                onClick={() => { if (!tutorLocked) setActiveTab(t.id); }}
+                disabled={tutorLocked}
+                title={tutorLocked ? "AI tutor is disabled for the active assessment" : undefined}
+                data-testid={`tab-${t.id}`}
+                className={`brutal-btn text-sm inline-flex items-center gap-2 ${activeTab === t.id ? "bg-ink text-white" : "bg-white hover:bg-butter"} ${tutorLocked ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
+                <t.icon size={16} weight="bold" /> {t.label}{tutorLocked ? " · locked" : ""}
+              </button>
+            );
+          })}
         </div>
 
         {/* Tab body */}
@@ -129,10 +146,21 @@ export default function Topic() {
             <FlashcardsView data={content.flashcards} loading={loading} onGenerate={() => generate("flashcards")} />
           )}
           {activeTab === "paper" && (
-            <PaperView data={content.paper} loading={loading} onGenerate={() => generate("paper")} examBoard={examBoard} setExamBoard={setExamBoard} />
+            <PaperView
+              data={content.paper}
+              loading={loading}
+              onGenerate={() => generate("paper")}
+              examBoard={examBoard}
+              setExamBoard={setExamBoard}
+              allowTutor={allowTutor}
+              setAllowTutor={setAllowTutor}
+              assessmentLockTutor={assessmentLockTutor}
+            />
           )}
           {activeTab === "tutor" && (
-            <TutorView subject={subject.name} topic={topic.name} grade_level={user?.grade_level || "high_school"} />
+            assessmentLockTutor
+              ? <TutorLockedNotice />
+              : <TutorView subject={subject.name} topic={topic.name} grade_level={user?.grade_level || "high_school"} />
           )}
         </div>
       </div>
@@ -325,7 +353,7 @@ function FlashcardsView({ data, onGenerate, loading }) {
   );
 }
 
-function PaperView({ data, onGenerate, loading, examBoard, setExamBoard }) {
+function PaperView({ data, onGenerate, loading, examBoard, setExamBoard, allowTutor, setAllowTutor, assessmentLockTutor }) {
   return (
     <div className="space-y-4" data-testid="paper-content">
       <div className="flex flex-wrap items-end gap-3 border-b-2 border-ink pb-4">
@@ -338,6 +366,17 @@ function PaperView({ data, onGenerate, loading, examBoard, setExamBoard }) {
           >
             {EXAM_BOARDS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
           </select>
+        </label>
+        <label className="inline-flex items-center gap-2 border-2 border-ink rounded-md bg-white px-3 py-2 text-sm cursor-pointer" data-testid="paper-allow-tutor-toggle">
+          <input
+            type="checkbox"
+            checked={!!allowTutor}
+            onChange={(e) => setAllowTutor(e.target.checked)}
+            className="h-4 w-4 accent-black"
+            data-testid="paper-allow-tutor-checkbox"
+          />
+          <span className="font-bold">Allow AI tutor</span>
+          <span className="text-xs text-[#4A4A4A]">during this assessment</span>
         </label>
         <button
           onClick={onGenerate} disabled={loading}
@@ -352,6 +391,12 @@ function PaperView({ data, onGenerate, loading, examBoard, setExamBoard }) {
           </button>
         )}
       </div>
+
+      {data && assessmentLockTutor && (
+        <div className="brutal-card p-3 bg-peach text-sm inline-flex items-center gap-2" data-testid="paper-tutor-locked-banner">
+          <Prohibit size={16} weight="bold" /> AI tutor is <strong>locked</strong> for this assessment. Regenerate with "Allow AI tutor" ticked to enable it.
+        </div>
+      )}
 
       {!data ? (
         <div className="text-center py-10">
@@ -410,6 +455,19 @@ function PaperView({ data, onGenerate, loading, examBoard, setExamBoard }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function TutorLockedNotice() {
+  return (
+    <div className="flex flex-col items-center justify-center text-center py-12" data-testid="tutor-locked">
+      <Prohibit size={40} weight="duotone" />
+      <div className="font-display font-bold text-2xl mt-4">AI Tutor is locked</div>
+      <p className="text-[#4A4A4A] text-sm mt-2 max-w-md">
+        Your current assessment on this topic was generated with the AI tutor <strong>disabled</strong>.
+        Regenerate the paper with "Allow AI tutor" turned on to unlock it.
+      </p>
     </div>
   );
 }

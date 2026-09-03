@@ -17,7 +17,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta
-from emergentintegrations.llm.chat import LlmChat, UserMessage
+from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse, CheckoutStatusResponse,
 )
@@ -135,6 +135,7 @@ class AIGenerateRequest(BaseModel):
     grade_level: str
     content_type: Literal["summary", "quiz", "flashcards", "explanation", "paper"]
     exam_board: Optional[str] = None  # 'aqa','edexcel','ocr','ib','cie','generic'
+    allow_tutor: Optional[bool] = True  # If False, AI tutor is disabled while the student sits this assessment
 
 class CheckoutCreateRequest(BaseModel):
     plan_id: Literal["basic", "standard", "pro", "school_small", "school_medium", "school_large", "mat_1_5", "mat_5_10", "mat_10_30", "mat_30_50", "mat_50_80", "mat_80_100"]
@@ -146,6 +147,7 @@ class AIChatRequest(BaseModel):
     grade_level: str
     message: str
     session_id: Optional[str] = None
+    images: Optional[List[str]] = None  # base64 images (optionally as data URLs)
 
 class HomeworkHelpRequest(BaseModel):
     problem: str
@@ -153,6 +155,7 @@ class HomeworkHelpRequest(BaseModel):
     grade_level: str
     subject: Optional[str] = None
     session_id: Optional[str] = None
+    images: Optional[List[str]] = None  # base64 images pasted / uploaded by the student
 
 class FocusStartRequest(BaseModel):
     duration_minutes: int
@@ -167,6 +170,28 @@ class ProgressUpdate(BaseModel):
     completed: bool = False
 
 # ====================== Helpers ======================
+
+def _strip_data_url(b64: str) -> str:
+    """Accept either raw base64 or a data URL and return the raw base64 payload."""
+    if not b64:
+        return ""
+    if "," in b64 and b64.strip().startswith("data:"):
+        return b64.split(",", 1)[1]
+    return b64
+
+def _build_user_message(text: str, images: Optional[List[str]] = None) -> "UserMessage":
+    """Build a UserMessage that may include pasted/attached images (multimodal)."""
+    if not images:
+        return UserMessage(text=text)
+    contents = []
+    for raw in images[:6]:  # cap at 6 images per turn
+        clean = _strip_data_url(raw)
+        if not clean:
+            continue
+        contents.append(ImageContent(image_base64=clean))
+    if not contents:
+        return UserMessage(text=text)
+    return UserMessage(text=text, file_contents=contents)
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
@@ -739,11 +764,12 @@ async def ai_generate(req: AIGenerateRequest, current=Depends(get_current_user))
         "grade_level": req.grade_level,
         "content_type": req.content_type,
         "exam_board": req.exam_board,
+        "allow_tutor": bool(req.allow_tutor) if req.content_type in ("paper", "quiz") else True,
         "content": data,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.generated_content.insert_one(doc)
-    return {"content_type": req.content_type, "content": data}
+    return {"content_type": req.content_type, "content": data, "allow_tutor": doc["allow_tutor"]}
 
 @api_router.post("/ai/chat")
 async def ai_chat(req: AIChatRequest, current=Depends(get_current_user)):
@@ -768,7 +794,7 @@ async def ai_chat(req: AIChatRequest, current=Depends(get_current_user)):
         system_message=system,
     ).with_model("anthropic", "claude-sonnet-4-5-20250929")
     try:
-        response = await chat.send_message(UserMessage(text=req.message))
+        response = await chat.send_message(_build_user_message(req.message, req.images))
     except Exception as e:
         logging.exception("AI chat failed")
         raise HTTPException(status_code=500, detail=f"AI chat failed: {str(e)}")
@@ -780,6 +806,7 @@ async def ai_chat(req: AIChatRequest, current=Depends(get_current_user)):
         "subject": req.subject,
         "topic": req.topic,
         "user_message": req.message,
+        "has_images": bool(req.images),
         "ai_response": response,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
@@ -846,7 +873,7 @@ async def ai_help(req: HomeworkHelpRequest, current=Depends(get_current_user)):
     ).with_model("anthropic", "claude-sonnet-4-5-20250929")
 
     try:
-        response = await chat.send_message(UserMessage(text=user_text))
+        response = await chat.send_message(_build_user_message(user_text, req.images))
     except Exception as e:
         logging.exception("AI help failed")
         raise HTTPException(status_code=500, detail=f"AI help failed: {str(e)}")
@@ -857,6 +884,7 @@ async def ai_help(req: HomeworkHelpRequest, current=Depends(get_current_user)):
         "mode": "homework_help",
         "problem": req.problem if not req.session_id else None,
         "user_message": user_text,
+        "has_images": bool(req.images),
         "ai_response": response,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
