@@ -268,3 +268,27 @@
 - P2: Refactor `server.py` (~3.5k lines) into modular routers.
 - P2: Deep AI curriculum-aware prompt mapping for Dreams feature.
 - P2: Show teachers a MAT-wide "locked assessments" dashboard summarising all currently-locked papers + who set them.
+
+## Iteration 21 — Subscription cancellation (Pricing) — 2026-02-03
+
+### Done
+- Backend `POST /api/billing/cancel` — sets `cancel_at_period_end=true` + `canceled_at`. Refuses to run on free plan, on a lifetime licence, or when a cancellation is already pending. User keeps full access until `subscription_expires_at`.
+- Backend `POST /api/billing/resume` — undoes the pending cancellation while the paid period is still active; refuses once the period has expired.
+- `GET /api/billing/me` extended with `cancel_at_period_end`, `canceled_at`, `lifetime`.
+- Checkout status handler + Stripe webhook both clear `cancel_at_period_end` and `canceled_at` on successful renewal so a resubscribe cleanly resets the state.
+- `Pricing.jsx`: new "Manage subscription" card sits under the "Current plan" pill for any paid, non-lifetime user. Shows plan name, price/period, "Runs until DD/MM/YYYY. Cancel any time — you'll keep access until then." with a **Cancel subscription** button. After cancel: switches to a "Cancelled · you keep access until DD/MM/YYYY." message + **Resume subscription** button. Also swaps "expires" → "ends" in the top pill when cancellation is pending.
+- Confirm dialog on cancel to prevent misclicks; toast success/failure messages on both actions.
+
+### Verified
+- curl round-trip: billing/me → cancel → billing/me (`cancel_at_period_end=true`, `canceled_at` set) → resume → billing/me (`cancel_at_period_end=false`, `canceled_at` cleared).
+- Lifetime-guard curl: cancel returned 400 "Lifetime access can't be cancelled here — please contact support." (protecting HWA26 owner).
+- Screenshots: (1) Manage-subscription card with **Cancel subscription** button, (2) after clicking it — "Cancelled · you keep access until 10/3/2026" state with **Resume subscription** button + success toast.
+
+### Backlog (unchanged priority)
+- P1 verify: Email Auto-sort webhook → Owner unrouted inbox.
+- P2: Refactor `server.py` (~3.6k lines) into modular routers.
+- P2: Deep AI curriculum-aware prompt mapping for Dreams feature.
+- P2: Mobile "Take photo" for AI Tutor.
+- P2: Lock-audit trail below the Teacher Locks table.
+- P2: Downgrade path (Pro → Standard/Basic) rather than only full cancel.
+

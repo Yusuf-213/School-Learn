@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import GlobalNav from "@/components/GlobalNav";
 import { api } from "@/lib/api";
-import { CheckCircle, Sparkle, Crown, Buildings, XCircle } from "@phosphor-icons/react";
+import { CheckCircle, Sparkle, Crown, Buildings, XCircle, ArrowsClockwise, Prohibit } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -33,6 +33,14 @@ export default function Pricing() {
   const [billing, setBilling] = useState(null);
   const [loading, setLoading] = useState(null);
   const [tab, setTab] = useState("individual");
+  const [cancelBusy, setCancelBusy] = useState(false);
+
+  const refreshBilling = async () => {
+    try {
+      const { data: b } = await api.get("/billing/me");
+      setBilling(b);
+    } catch {}
+  };
 
   useEffect(() => {
     (async () => {
@@ -40,8 +48,7 @@ export default function Pricing() {
         const { data } = await api.get("/plans");
         setPlans(data.plans || []);
         if (user) {
-          const { data: b } = await api.get("/billing/me");
-          setBilling(b);
+          await refreshBilling();
         }
       } catch {}
     })();
@@ -57,6 +64,33 @@ export default function Pricing() {
       toast.error(e.response?.data?.detail || "Failed to start checkout");
     } finally {
       setLoading(null);
+    }
+  };
+
+  const cancelSubscription = async () => {
+    if (!window.confirm(`Cancel your ${billing?.plan?.name} subscription?\n\nYou'll keep full access until ${billing?.expires_at ? new Date(billing.expires_at).toLocaleDateString() : "your period ends"}, then drop to the free plan. You can resume any time before then.`)) return;
+    setCancelBusy(true);
+    try {
+      await api.post("/billing/cancel");
+      toast.success("Subscription cancelled. You keep access until it expires.");
+      await refreshBilling();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Couldn't cancel subscription");
+    } finally {
+      setCancelBusy(false);
+    }
+  };
+
+  const resumeSubscription = async () => {
+    setCancelBusy(true);
+    try {
+      await api.post("/billing/resume");
+      toast.success("Subscription resumed.");
+      await refreshBilling();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Couldn't resume subscription");
+    } finally {
+      setCancelBusy(false);
     }
   };
 
@@ -77,11 +111,58 @@ export default function Pricing() {
             <span className="font-bold">Current plan:</span>{" "}
             <span className="font-display font-bold uppercase">{billing.plan?.name}</span>
             {billing.expires_at && billing.tier !== "free" && (
-              <span className="text-[#4A4A4A] ml-2">· expires {new Date(billing.expires_at).toLocaleDateString()}</span>
+              <span className="text-[#4A4A4A] ml-2">
+                · {billing.cancel_at_period_end ? "ends" : "expires"} {new Date(billing.expires_at).toLocaleDateString()}
+              </span>
             )}
+            {billing.lifetime && <span className="ml-2 font-bold uppercase text-[10px] bg-mint border-2 border-ink rounded px-1.5 py-0.5">Lifetime</span>}
           </div>
         )}
       </div>
+
+      {user && billing && billing.tier !== "free" && !billing.lifetime && (
+        <div className="brutal-card p-5 bg-white flex flex-wrap items-center justify-between gap-4" data-testid="manage-subscription">
+          <div>
+            <div className="text-xs uppercase tracking-[0.2em] font-bold mb-1 text-[#4A4A4A]">Manage subscription</div>
+            <div className="font-display font-bold text-xl">
+              {billing.plan?.name}
+              <span className="ml-2 text-[#4A4A4A] font-mono text-sm">
+                £{Number(billing.plan?.amount ?? 0).toLocaleString("en-GB")}/{billing.plan?.period}
+              </span>
+            </div>
+            {billing.cancel_at_period_end ? (
+              <div className="text-sm mt-1 text-[#8A3B00] font-bold" data-testid="cancel-status">
+                Cancelled · you keep access until {billing.expires_at ? new Date(billing.expires_at).toLocaleDateString() : "the period ends"}.
+              </div>
+            ) : billing.expires_at ? (
+              <div className="text-sm mt-1 text-[#4A4A4A]" data-testid="renews-hint">
+                Runs until {new Date(billing.expires_at).toLocaleDateString()}. Cancel any time — you'll keep access until then.
+              </div>
+            ) : null}
+          </div>
+          <div className="flex gap-2">
+            {billing.cancel_at_period_end ? (
+              <button
+                onClick={resumeSubscription}
+                disabled={cancelBusy}
+                data-testid="resume-subscription-btn"
+                className="brutal-btn bg-ink text-white inline-flex items-center gap-2 disabled:opacity-60"
+              >
+                <ArrowsClockwise size={14} weight="bold" /> {cancelBusy ? "Resuming…" : "Resume subscription"}
+              </button>
+            ) : (
+              <button
+                onClick={cancelSubscription}
+                disabled={cancelBusy}
+                data-testid="cancel-subscription-btn"
+                className="brutal-btn bg-white hover:bg-peach inline-flex items-center gap-2 disabled:opacity-60"
+              >
+                <Prohibit size={14} weight="bold" /> {cancelBusy ? "Cancelling…" : "Cancel subscription"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="flex justify-center">
         <div className="border-2 border-ink rounded-md p-1 bg-white inline-flex shadow-brutal">

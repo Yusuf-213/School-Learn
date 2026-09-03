@@ -712,7 +712,46 @@ async def billing_me(current=Depends(get_current_user)):
         "plan": {k: plan[k] for k in ("name", "amount", "currency", "period", "daily_ai_limit", "papers", "exam_boards")},
         "used_today": used_today,
         "expires_at": current.get("subscription_expires_at"),
+        "cancel_at_period_end": bool(current.get("cancel_at_period_end")),
+        "canceled_at": current.get("canceled_at"),
+        "lifetime": bool(current.get("subscription_lifetime")),
     }
+
+@api_router.post("/billing/cancel")
+async def billing_cancel(current=Depends(get_current_user)):
+    """Cancel a paid subscription. User keeps access until subscription_expires_at."""
+    tier = current.get("subscription_tier") or "free"
+    if tier == "free":
+        raise HTTPException(status_code=400, detail="You're on the free plan — nothing to cancel.")
+    if current.get("subscription_lifetime"):
+        raise HTTPException(status_code=400, detail="Lifetime access can't be cancelled here — please contact support.")
+    if current.get("cancel_at_period_end"):
+        raise HTTPException(status_code=400, detail="Your subscription is already scheduled to end.")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"user_id": current["user_id"]},
+        {"$set": {"cancel_at_period_end": True, "canceled_at": now_iso}},
+    )
+    return {
+        "ok": True,
+        "cancel_at_period_end": True,
+        "canceled_at": now_iso,
+        "expires_at": current.get("subscription_expires_at"),
+    }
+
+@api_router.post("/billing/resume")
+async def billing_resume(current=Depends(get_current_user)):
+    """Undo a pending cancellation while the paid period is still active."""
+    if not current.get("cancel_at_period_end"):
+        raise HTTPException(status_code=400, detail="Your subscription isn't cancelled.")
+    expires = current.get("subscription_expires_at")
+    if expires and expires <= datetime.now(timezone.utc).isoformat():
+        raise HTTPException(status_code=400, detail="Your paid period has already ended — please resubscribe.")
+    await db.users.update_one(
+        {"user_id": current["user_id"]},
+        {"$set": {"cancel_at_period_end": False}, "$unset": {"canceled_at": ""}},
+    )
+    return {"ok": True, "cancel_at_period_end": False, "expires_at": expires}
 
 @api_router.post("/ai/generate")
 async def ai_generate(req: AIGenerateRequest, current=Depends(get_current_user)):
@@ -1160,7 +1199,8 @@ async def billing_status(session_id: str, http_request: Request, current=Depends
                 "subscription_tier": tx["plan_id"],
                 "subscription_expires_at": expires.isoformat(),
                 "subscription_period": plan["period"],
-            }},
+                "cancel_at_period_end": False,
+            }, "$unset": {"canceled_at": ""}},
         )
 
     tx = await db.payment_transactions.find_one({"session_id": session_id, "user_id": current["user_id"]}, {"_id": 0})
@@ -1199,7 +1239,8 @@ async def stripe_webhook(request: Request):
                         "subscription_tier": tx["plan_id"],
                         "subscription_expires_at": expires.isoformat(),
                         "subscription_period": plan["period"],
-                    }},
+                        "cancel_at_period_end": False,
+                    }, "$unset": {"canceled_at": ""}},
                 )
     return {"ok": True}
 
