@@ -759,6 +759,8 @@ async def ai_generate(req: AIGenerateRequest, current=Depends(get_current_user))
 
     doc = {
         "user_id": current["user_id"],
+        "school_id": current.get("school_id"),
+        "content_id": f"gc_{uuid.uuid4().hex[:12]}",
         "subject": req.subject,
         "topic": req.topic,
         "sub_topic": req.sub_topic,
@@ -774,9 +776,67 @@ async def ai_generate(req: AIGenerateRequest, current=Depends(get_current_user))
     return {
         "content_type": req.content_type,
         "content": data,
+        "content_id": doc["content_id"],
         "allow_tutor": doc["allow_tutor"],
         "tutor_locked_until": doc["tutor_locked_until"],
     }
+
+# ====================== Teacher: Assessment Tutor Locks ======================
+
+def _require_teacher_or_admin(current: dict):
+    if is_owner(current):
+        return
+    if current.get("role") in {ROLE_TEACHER, ROLE_SCHOOL_ADMIN}:
+        return
+    raise HTTPException(status_code=403, detail="Teacher or school admin only")
+
+@api_router.get("/teacher/assessment_locks")
+async def list_assessment_locks(current=Depends(get_current_user)):
+    """Every currently-locked paper/quiz across the caller's school.
+    Owner sees everything; school_admin/teacher scope to their school."""
+    _require_teacher_or_admin(current)
+    q = {"content_type": {"$in": ["paper", "quiz"]}, "allow_tutor": False}
+    if not is_owner(current):
+        sid = current.get("school_id")
+        if not sid:
+            return {"items": [], "server_time": datetime.now(timezone.utc).isoformat()}
+        q["school_id"] = sid
+    docs = await db.generated_content.find(
+        q,
+        {"_id": 0, "content_id": 1, "user_id": 1, "school_id": 1, "subject": 1, "topic": 1,
+         "sub_topic": 1, "content_type": 1, "allow_tutor": 1, "tutor_locked_until": 1, "created_at": 1},
+    ).sort("created_at", -1).limit(200).to_list(200)
+    user_ids = list({d["user_id"] for d in docs if d.get("user_id")})
+    users = await db.users.find({"user_id": {"$in": user_ids}}, {"_id": 0, "user_id": 1, "name": 1, "email": 1}).to_list(len(user_ids)) if user_ids else []
+    umap = {u["user_id"]: u for u in users}
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for d in docs:
+        u = umap.get(d.get("user_id")) or {}
+        d["student_name"] = u.get("name")
+        d["student_email"] = u.get("email")
+        d["expired"] = bool(d.get("tutor_locked_until") and d["tutor_locked_until"] <= now_iso)
+    return {"items": docs, "server_time": now_iso}
+
+@api_router.post("/teacher/assessment_locks/{content_id}/unlock")
+async def unlock_assessment(content_id: str, current=Depends(get_current_user)):
+    """Manually unlock the AI tutor for a specific paper/quiz assessment."""
+    _require_teacher_or_admin(current)
+    row = await db.generated_content.find_one({"content_id": content_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    if not is_owner(current) and row.get("school_id") != current.get("school_id"):
+        raise HTTPException(status_code=403, detail="Not permitted for this school")
+    await db.generated_content.update_one(
+        {"content_id": content_id},
+        {"$set": {
+            "allow_tutor": True,
+            "tutor_locked_until": None,
+            "unlocked_by": current["user_id"],
+            "unlocked_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    return {"content_id": content_id, "allow_tutor": True}
+
 
 @api_router.post("/ai/chat")
 async def ai_chat(req: AIChatRequest, current=Depends(get_current_user)):

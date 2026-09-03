@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
 import { SUBJECTS } from "@/lib/subjects";
-import { Lightning, Plus, ChartBar, Sparkle, FileText, Warning, ChalkboardTeacher, ArrowsClockwise } from "@phosphor-icons/react";
+import { Lightning, Plus, ChartBar, Sparkle, FileText, Warning, ChalkboardTeacher, ArrowsClockwise, Prohibit, Clock, LockOpen } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const TABS = [
   { id: "lessons", label: "Lessons", icon: Lightning },
   { id: "homework", label: "Homework", icon: FileText },
   { id: "detentions", label: "Detentions", icon: Warning },
+  { id: "locks", label: "Locks", icon: Prohibit },
 ];
 
 export default function Teacher() {
@@ -40,6 +41,7 @@ export default function Teacher() {
         {tab === "lessons" && <LessonsTab />}
         {tab === "homework" && <HomeworkTab />}
         {tab === "detentions" && <DetentionsTab />}
+        {tab === "locks" && <LocksTab />}
       </div>
     </AppLayout>
   );
@@ -429,3 +431,128 @@ function DetentionsTab() {
     </div>
   );
 }
+
+function LocksTab() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [now, setNow] = useState(Date.now());
+  const [unlockingId, setUnlockingId] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/teacher/assessment_locks");
+      setItems(data.items || []);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to load locks");
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const unlock = async (id) => {
+    if (!window.confirm("Unlock the AI tutor for this assessment now?")) return;
+    setUnlockingId(id);
+    try {
+      await api.post(`/teacher/assessment_locks/${id}/unlock`);
+      toast.success("Assessment unlocked.");
+      setItems((cur) => cur.filter((x) => x.content_id !== id));
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to unlock");
+    } finally {
+      setUnlockingId(null);
+    }
+  };
+
+  const countdown = (iso) => {
+    if (!iso) return "no timer";
+    const diff = new Date(iso).getTime() - now;
+    if (diff <= 0) return "auto-unlocked";
+    const s = Math.floor(diff / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${sec}s`;
+    return `${sec}s`;
+  };
+
+  return (
+    <div className="space-y-4" data-testid="locks-tab">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-[#4A4A4A] text-sm">Every currently-locked practice paper or quiz across your school. Tap "Unlock now" to give the student their AI tutor back immediately.</div>
+        <button onClick={load} disabled={loading} className="brutal-btn bg-white hover:bg-butter inline-flex items-center gap-2 text-sm" data-testid="locks-refresh-btn">
+          <ArrowsClockwise size={14} weight="bold" className={loading ? "animate-spin" : ""} /> Refresh
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="brutal-card p-6 text-[#4A4A4A]">Loading…</div>
+      ) : items.length === 0 ? (
+        <div className="brutal-card p-6 text-[#4A4A4A]" data-testid="locks-empty">No locked assessments right now.</div>
+      ) : (
+        <div className="overflow-x-auto brutal-card">
+          <table className="min-w-full text-sm">
+            <thead className="bg-peach border-b-2 border-ink">
+              <tr>
+                <th className="text-left p-3 font-display">Student</th>
+                <th className="text-left p-3 font-display">Subject · Topic</th>
+                <th className="text-left p-3 font-display">Type</th>
+                <th className="text-left p-3 font-display">Unlocks in</th>
+                <th className="text-left p-3 font-display">Auto-unlock at</th>
+                <th className="text-right p-3 font-display">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((it) => {
+                const iso = it.tutor_locked_until;
+                const expired = iso && new Date(iso).getTime() <= now;
+                return (
+                  <tr key={it.content_id} className="border-t border-ink/20" data-testid={`lock-row-${it.content_id}`}>
+                    <td className="p-3">
+                      <div className="font-bold">{it.student_name || "(no name)"}</div>
+                      <div className="text-xs text-[#4A4A4A]">{it.student_email || it.user_id}</div>
+                    </td>
+                    <td className="p-3">
+                      <div className="font-bold">{it.subject}</div>
+                      <div className="text-xs text-[#4A4A4A]">{it.topic}{it.sub_topic ? ` · ${it.sub_topic}` : ""}</div>
+                    </td>
+                    <td className="p-3">
+                      <span className="px-2 py-0.5 border-2 border-ink rounded-md bg-butter text-xs font-bold uppercase">{it.content_type}</span>
+                    </td>
+                    <td className="p-3 font-mono font-bold">
+                      {iso ? (
+                        <span className={expired ? "text-[#4A4A4A]" : ""}>{countdown(iso)}</span>
+                      ) : (
+                        <span className="text-[#4A4A4A]">no timer</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-xs text-[#4A4A4A]">
+                      {iso ? new Date(iso).toLocaleString() : "—"}
+                    </td>
+                    <td className="p-3 text-right">
+                      <button
+                        onClick={() => unlock(it.content_id)}
+                        disabled={unlockingId === it.content_id}
+                        data-testid={`lock-unlock-${it.content_id}`}
+                        className="brutal-btn bg-ink text-white text-xs inline-flex items-center gap-1 disabled:opacity-60"
+                      >
+                        <LockOpen size={14} weight="bold" /> {unlockingId === it.content_id ? "Unlocking…" : "Unlock now"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
