@@ -235,6 +235,21 @@ export default function Pricing() {
       <p className="text-xs text-[#4A4A4A] text-center max-w-2xl mx-auto">
         Prices in GBP. School plans are annual whole-school licences. Test mode — no real charges on the demo.
       </p>
+
+      <div className="brutal-card p-5 bg-butter text-center max-w-3xl mx-auto" data-testid="pricing-custom-plan-banner">
+        <div className="text-xs uppercase tracking-[0.2em] font-bold mb-1 text-[#4A4A4A]">Need something different?</div>
+        <div className="font-display font-bold text-lg">
+          Talk to us about a bespoke plan — email{" "}
+          <a href="mailto:schoollearnsupport@pm.me?subject=Custom%20Learnify%20plan%20enquiry&body=Hi%20Learnify%20team%2C%0A%0AWe%27d%20like%20a%20custom%20plan.%20A%20few%20things%20about%20us%3A%0A%0A-%20Organisation%20name%3A%20%0A-%20Number%20of%20schools%2Fpupils%3A%20%0A-%20What%20you%20need%20that%20our%20listed%20plans%20don%27t%20cover%3A%20%0A-%20Timeline%3A%20%0A%0AThanks."
+             className="underline font-mono"
+             data-testid="pricing-support-email">
+            schoollearnsupport@pm.me
+          </a>
+        </div>
+        <p className="text-sm text-[#4A4A4A] mt-2">
+          Tell us who you are, why you want a custom plan, and roughly how many pupils or schools — we'll come back within one working day.
+        </p>
+      </div>
     </div>
   );
 

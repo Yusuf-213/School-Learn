@@ -292,3 +292,39 @@
 - P2: Lock-audit trail below the Teacher Locks table.
 - P2: Downgrade path (Pro → Standard/Basic) rather than only full cancel.
 
+
+## Iteration 23 — Student timetable proposals + AI confidence + MAT repricing + Support email — 2026-02-03
+
+### Done
+**Student timetable edits → SLT approval (school-scoped by email domain)**
+- New `TimetableProposal` model and 4 endpoints:
+  - `POST /api/timetable/proposals` — any authed member of a school can propose add/remove.
+  - `GET /api/timetable/proposals` — SLT / school_admin sees pending proposals scoped to their school_id (which is derived from the school's `email_domain` at signup — no extra email filtering needed).
+  - `POST /api/timetable/proposals/{id}/approve` and `.../reject` — school_admin/owner only; approve inserts/deletes the real entry and stamps `created_via_proposal` on it.
+- `Timetable.jsx` rewritten:
+  - Teachers/school_admin/owner keep direct add/delete.
+  - Students & anyone else get a "Suggest a new lesson" form + a "Suggest remove" prompt on entries; sends a proposal instead of writing directly.
+  - School admins see a **Pending suggestions** inbox at the top with Approve / Reject buttons and the proposer's email + optional note.
+  - Students see their own pending suggestions with an "Awaiting SLT approval" strip.
+- Verified round-trip: `Tester@tester.org` (school_admin) proposal → school-scoped list → approve → new entry appears with `created_via_proposal=<proposal_id>`.
+
+**AI confidence pill on every answer**
+- Both `/ai/help` and `/ai/chat` system prompts now instruct Claude Sonnet 4.5 to end every reply with `Confidence: NN%` on the last line, using a calibrated scale (95-100% textbook facts, 70-90% nuanced, 40-65% edge, <40% guessing).
+- New `frontend/src/lib/confidence.js` — `parseConfidence(text)` strips the trailing line and returns `{text, confidence}`; `confidenceStyle(n)` maps % → colour + verdict.
+- `Help.jsx` and Topic `TutorView`: each assistant bubble now shows a coloured "NN% confident" pill in the header (mint ≥85, butter ≥65, peach ≥40, red <40 with "verify with a teacher"). The confidence line is hidden from the visible answer.
+- Curl-verified: both endpoints return `Confidence: 100%` on textbook queries.
+
+**MAT re-pricing**
+- Updated PLANS to £200k / £400k / £600k / £800k / £1,000,000 / £2,000,000 for the six MAT tiers.
+- Pricing page shows the new numbers correctly.
+
+**Custom-plan support email**
+- Added a "Need something different?" card at the foot of every Pricing page tab with a prefilled mailto to `schoollearnsupport@pm.me` (subject "Custom Learnify plan enquiry" + a template body asking for org name, size, need, timeline). Also displayed prominently below the pricing grid so anyone can request a custom plan any time.
+
+### Backlog (unchanged priority)
+- P1 verify: Email Auto-sort webhook → Owner unrouted inbox.
+- P2: Refactor `server.py` (~3.7k lines) into modular routers.
+- P2: Downgrade path Pro → Standard/Basic instead of only full cancel.
+- P2: Mobile camera capture for AI Tutor.
+- P2: Lock-audit trail below the Teacher Locks table.
+

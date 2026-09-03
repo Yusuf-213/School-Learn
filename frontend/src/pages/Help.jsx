@@ -5,8 +5,9 @@ import GradeLevelSelect from "@/components/GradeLevelSelect";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { SUBJECTS } from "@/lib/subjects";
-import { Question, ClipboardText, PaperPlaneTilt, ArrowsClockwise, Sparkle, Warning, Image as ImageIcon, X } from "@phosphor-icons/react";
+import { Question, ClipboardText, PaperPlaneTilt, ArrowsClockwise, Sparkle, Warning, Image as ImageIcon, X, Gauge } from "@phosphor-icons/react";
 import { toast } from "sonner";
+import { parseConfidence, confidenceStyle } from "@/lib/confidence";
 
 // Read a File/Blob into a data URL (base64)
 function fileToDataUrl(file) {
@@ -279,23 +280,39 @@ export default function Help() {
         {inSession && (
           <div className="brutal-card p-5 bg-white">
             <div ref={scrollRef} className="space-y-3 max-h-[560px] overflow-y-auto pr-2" data-testid="help-chat-thread">
-              {messages.map((m, i) => (
-                <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[88%] border-2 border-ink rounded-md p-3 ${m.role === "user" ? "bg-ink text-white" : "bg-butter"}`}>
-                    <div className="text-xs uppercase tracking-[0.2em] font-bold mb-1 opacity-70">
-                      {m.role === "user" ? "You" : "Helper"}
-                    </div>
-                    {m.images?.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mb-2">
-                        {m.images.map((src, k) => (
-                          <img key={k} src={src} alt={`msg-img-${k}`} className="h-20 w-20 object-cover border-2 border-white/40 rounded-md" />
-                        ))}
+              {messages.map((m, i) => {
+                const parsed = m.role === "assistant" ? parseConfidence(m.text) : { text: m.text, confidence: null };
+                const conf = parsed.confidence;
+                const cStyle = conf !== null ? confidenceStyle(conf) : null;
+                return (
+                  <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[88%] border-2 border-ink rounded-md p-3 ${m.role === "user" ? "bg-ink text-white" : "bg-butter"}`}>
+                      <div className="flex items-center justify-between gap-3 mb-1">
+                        <div className="text-xs uppercase tracking-[0.2em] font-bold opacity-70">
+                          {m.role === "user" ? "You" : "Helper"}
+                        </div>
+                        {cStyle && (
+                          <span
+                            className={`inline-flex items-center gap-1 border-2 border-ink rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${cStyle.bg} text-ink`}
+                            data-testid={`help-confidence-${conf}`}
+                            title="AI's honest self-assessment of how sure it is about this answer"
+                          >
+                            <Gauge size={10} weight="bold" /> {cStyle.label}
+                          </span>
+                        )}
                       </div>
-                    )}
-                    <div className="whitespace-pre-wrap text-sm leading-relaxed">{m.text}</div>
+                      {m.images?.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mb-2">
+                          {m.images.map((src, k) => (
+                            <img key={k} src={src} alt={`msg-img-${k}`} className="h-20 w-20 object-cover border-2 border-white/40 rounded-md" />
+                          ))}
+                        </div>
+                      )}
+                      <div className="whitespace-pre-wrap text-sm leading-relaxed">{parsed.text || m.text}</div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
               {loading && (
                 <div className="flex"><div className="border-2 border-ink rounded-md p-3 bg-butter text-sm font-mono">Thinking…</div></div>
               )}

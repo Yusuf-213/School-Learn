@@ -50,12 +50,12 @@ PLANS = {
     "school_small":  {"name": "School · Small (600–1,000 students)",   "amount": 3000.00,   "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1000},
     "school_medium": {"name": "School · Medium (1,000–1,500 students)","amount": 8000.00,   "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1500},
     "school_large":  {"name": "School · Large (1,500+ students)",      "amount": 15000.00,  "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 99999},
-    "mat_1_5":       {"name": "MAT · 1–5 schools",                     "amount": 60000.00,  "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 5},
-    "mat_5_10":      {"name": "MAT · 5–10 schools",                    "amount": 100000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 10},
-    "mat_10_30":     {"name": "MAT · 10–30 schools",                   "amount": 400000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 30},
-    "mat_30_50":     {"name": "MAT · 30–50 schools",                   "amount": 600000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 50},
-    "mat_50_80":     {"name": "MAT · 50–80 schools",                   "amount": 900000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 80},
-    "mat_80_100":    {"name": "MAT · 80–100 schools",                  "amount": 1500000.00,"currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 100},
+    "mat_1_5":       {"name": "MAT · 1–5 schools",                     "amount": 200000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 5},
+    "mat_5_10":      {"name": "MAT · 5–10 schools",                    "amount": 400000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 10},
+    "mat_10_30":     {"name": "MAT · 10–30 schools",                   "amount": 600000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 30},
+    "mat_30_50":     {"name": "MAT · 30–50 schools",                   "amount": 800000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 50},
+    "mat_50_80":     {"name": "MAT · 50–80 schools",                   "amount": 1000000.00,"currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 80},
+    "mat_80_100":    {"name": "MAT · 80–100 schools",                  "amount": 2000000.00,"currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 100},
 }
 
 # Owner accounts — global super-admins
@@ -892,7 +892,12 @@ async def ai_chat(req: AIChatRequest, current=Depends(get_current_user)):
         f"Student level: {_grade_descriptor(req.grade_level)}. "
         f"{context}\n"
         f"Explain step-by-step, use simple analogies first, then deeper detail. "
-        f"Keep answers under 200 words unless the student asks for more. Use markdown."
+        f"Keep answers under 200 words unless the student asks for more. Use markdown.\n"
+        "FORMATTING RULES (do not deviate):\n"
+        "- On the VERY LAST line of every reply, print exactly `Confidence: NN%` (nothing after) "
+        "where NN is your honest self-assessed certainty (0-100, round to nearest 5). "
+        "Be genuinely calibrated: crisp maths / textbook facts → 95-100%; well-known but nuanced "
+        "→ 70-90%; opinion / edge cases / partial info → 40-65%; guessing → below 40%."
     )
     chat = LlmChat(
         api_key=EMERGENT_LLM_KEY,
@@ -959,6 +964,10 @@ async def ai_help(req: HomeworkHelpRequest, current=Depends(get_current_user)):
         "4. Calibrate language for: " + level + ".\n"
         "5. Use markdown. Keep each reply under 180 words.\n"
         "6. Never lecture for more than one concept at a time. Encourage effort.\n"
+        "7. On the VERY LAST line of every reply, print exactly `Confidence: NN%` (nothing after) "
+        "where NN is your honest self-assessed certainty in the maths / facts you're relying on "
+        "(0-100, round to nearest 5). Crisp textbook facts → 95-100%; nuanced → 70-90%; edge cases "
+        "or partial info → 40-65%; guessing → below 40%.\n"
         + subject_line
     )
 
@@ -2331,6 +2340,124 @@ async def add_timetable_override(ov: TimetableOverride, current=Depends(require_
     await db.timetable_overrides.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+
+# ------------- Student-proposed timetable changes (SLT-approved) -------------
+
+class TimetableProposal(BaseModel):
+    action: Literal["add", "remove"]
+    entry: Optional[TimetableEntry] = None      # required for "add"
+    target_entry_id: Optional[str] = None       # required for "remove"
+    note: Optional[str] = None                  # student's reason for the change
+
+
+@api_router.post("/timetable/proposals")
+async def propose_timetable_change(req: TimetableProposal, current=Depends(get_current_user)):
+    """Any authed member of a school (typically a student) can propose adding or removing
+    a timetable entry. Proposal is auto-scoped to the proposer's school_id (derived from their
+    email domain at signup) so SLT only ever sees their own school's proposals."""
+    sid = current.get("school_id")
+    if not sid:
+        raise HTTPException(status_code=400, detail="You must be linked to a school to propose changes.")
+    if req.action == "add" and not req.entry:
+        raise HTTPException(status_code=400, detail="entry required for add proposals")
+    if req.action == "remove" and not req.target_entry_id:
+        raise HTTPException(status_code=400, detail="target_entry_id required for remove proposals")
+    if req.action == "remove":
+        row = await db.timetable_entries.find_one({"entry_id": req.target_entry_id, "school_id": sid})
+        if not row:
+            raise HTTPException(status_code=404, detail="Target entry not in your school's timetable")
+    doc = {
+        "proposal_id": f"ttp_{uuid.uuid4().hex[:10]}",
+        "school_id": sid,
+        "proposed_by": current["user_id"],
+        "proposed_by_email": current.get("email"),
+        "proposed_by_role": current.get("role"),
+        "action": req.action,
+        "entry": req.entry.dict() if req.entry else None,
+        "target_entry_id": req.target_entry_id,
+        "note": (req.note or "").strip() or None,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.timetable_proposals.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/timetable/proposals")
+async def list_timetable_proposals(status: Optional[str] = "pending", current=Depends(get_current_user)):
+    """SLT/school_admin sees proposals for their school. Anyone else only sees their own."""
+    q = {}
+    if status:
+        q["status"] = status
+    if is_owner(current):
+        pass  # everything
+    elif current.get("role") == ROLE_SCHOOL_ADMIN:
+        sid = current.get("school_id")
+        if not sid:
+            return {"items": []}
+        q["school_id"] = sid
+    else:
+        q["proposed_by"] = current["user_id"]
+    docs = await db.timetable_proposals.find(q, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
+    return {"items": docs}
+
+
+async def _decide_timetable_proposal(proposal_id: str, current: dict, approve: bool, reason: Optional[str]):
+    if not (is_owner(current) or current.get("role") == ROLE_SCHOOL_ADMIN):
+        raise HTTPException(status_code=403, detail="Only SLT / school admin can decide proposals")
+    row = await db.timetable_proposals.find_one({"proposal_id": proposal_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    if not is_owner(current) and row.get("school_id") != current.get("school_id"):
+        raise HTTPException(status_code=403, detail="Not your school")
+    if row.get("status") != "pending":
+        raise HTTPException(status_code=400, detail=f"Proposal is already {row.get('status')}")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    if approve:
+        # Apply the change atomically-ish
+        if row["action"] == "add" and row.get("entry"):
+            new_entry = {
+                **row["entry"],
+                "entry_id": f"tt_{uuid.uuid4().hex[:8]}",
+                "school_id": row["school_id"],
+                "created_by": row["proposed_by"],
+                "created_via_proposal": proposal_id,
+                "created_at": now_iso,
+            }
+            await db.timetable_entries.insert_one(new_entry)
+        elif row["action"] == "remove" and row.get("target_entry_id"):
+            await db.timetable_entries.delete_one({
+                "entry_id": row["target_entry_id"], "school_id": row["school_id"],
+            })
+
+    await db.timetable_proposals.update_one(
+        {"proposal_id": proposal_id},
+        {"$set": {
+            "status": "approved" if approve else "rejected",
+            "decided_by": current["user_id"],
+            "decided_at": now_iso,
+            "decision_reason": (reason or "").strip() or None,
+        }},
+    )
+    updated = await db.timetable_proposals.find_one({"proposal_id": proposal_id}, {"_id": 0})
+    return updated
+
+
+class ProposalDecision(BaseModel):
+    reason: Optional[str] = None
+
+
+@api_router.post("/timetable/proposals/{proposal_id}/approve")
+async def approve_timetable_proposal(proposal_id: str, req: ProposalDecision = ProposalDecision(), current=Depends(get_current_user)):
+    return await _decide_timetable_proposal(proposal_id, current, True, req.reason if req else None)
+
+
+@api_router.post("/timetable/proposals/{proposal_id}/reject")
+async def reject_timetable_proposal(proposal_id: str, req: ProposalDecision = ProposalDecision(), current=Depends(get_current_user)):
+    return await _decide_timetable_proposal(proposal_id, current, False, req.reason if req else None)
 
 
 # ====================== Test accounts (Owner-only bulk-delete flag) ======================
