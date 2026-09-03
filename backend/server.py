@@ -2267,6 +2267,132 @@ async def business_pricing(current=Depends(get_current_user)):
     return BUSINESS_PRICING
 
 
+# ====================== Parent portal (children linking) ======================
+
+class ParentLinkChild(BaseModel):
+    child_email: EmailStr
+
+
+@api_router.post("/parent/children")
+async def link_child(req: ParentLinkChild, current=Depends(get_current_user)):
+    if current.get("role") != ROLE_PARENT and not is_owner(current):
+        raise HTTPException(status_code=403, detail="Parent only")
+    child_email = req.child_email.lower()
+    child = await db.users.find_one({"email": child_email})
+    if not child:
+        raise HTTPException(status_code=404, detail="No student with that email — ask the school to create the account first")
+    if child.get("role") != ROLE_STUDENT:
+        raise HTTPException(status_code=400, detail="Linked account must be a student")
+    await db.parent_links.update_one(
+        {"parent_user_id": current["user_id"], "child_user_id": child["user_id"]},
+        {"$set": {
+            "parent_user_id": current["user_id"],
+            "child_user_id": child["user_id"],
+            "child_email": child_email,
+            "child_name": child.get("name"),
+            "linked_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+    return {"linked": True, "child_user_id": child["user_id"], "child_email": child_email, "child_name": child.get("name")}
+
+
+@api_router.get("/parent/children")
+async def list_children(current=Depends(get_current_user)):
+    if current.get("role") != ROLE_PARENT and not is_owner(current):
+        raise HTTPException(status_code=403, detail="Parent only")
+    links = await db.parent_links.find({"parent_user_id": current["user_id"]}, {"_id": 0}).to_list(50)
+    # Attach headline stats per child (homework count + detentions + attendance summary)
+    for l in links:
+        cid = l["child_user_id"]
+        l["homework"] = await db.homework.count_documents({"assigned_to": cid})
+        l["detentions"] = await db.detentions.count_documents({"student_user_id": cid})
+    return {"children": links}
+
+
+@api_router.delete("/parent/children")
+async def unlink_child(req: ParentLinkChild, current=Depends(get_current_user)):
+    if current.get("role") != ROLE_PARENT and not is_owner(current):
+        raise HTTPException(status_code=403, detail="Parent only")
+    child_email = req.child_email.lower()
+    child = await db.users.find_one({"email": child_email})
+    if not child:
+        raise HTTPException(status_code=404, detail="Child not found")
+    res = await db.parent_links.delete_one({"parent_user_id": current["user_id"], "child_user_id": child["user_id"]})
+    return {"deleted": res.deleted_count}
+
+
+@api_router.get("/parent/children/{child_user_id}/summary")
+async def parent_child_summary(child_user_id: str, current=Depends(get_current_user)):
+    """Homework + detentions for a linked child. Parents only see linked kids."""
+    if not is_owner(current):
+        if current.get("role") != ROLE_PARENT:
+            raise HTTPException(status_code=403, detail="Parent only")
+        link = await db.parent_links.find_one({"parent_user_id": current["user_id"], "child_user_id": child_user_id})
+        if not link:
+            raise HTTPException(status_code=403, detail="Not linked to this child")
+    homework = await db.homework.find({"assigned_to": child_user_id}, {"_id": 0}).sort("due_at", -1).to_list(50)
+    detentions = await db.detentions.find({"student_user_id": child_user_id}, {"_id": 0}).sort("issued_at", -1).to_list(50)
+    return {"homework": homework, "detentions": detentions}
+
+
+# ====================== Email auto-sort (inbound webhook, e.g. Resend / Mailgun) ======================
+
+@api_router.post("/webhook/inbound-email")
+async def inbound_email(request: Request):
+    """
+    Ingress webhook for an inbound-email provider (Resend/Mailgun/etc).
+    Expected minimal payload: {from, to, subject, text, message_id}.
+    Routes to matching school (by @domain) + student/teacher record (by exact email) if found,
+    otherwise stashes in db.inbound_email_unrouted for a manual triage view.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        raw = (await request.body()).decode("utf-8", errors="replace")
+        body = {"raw": raw}
+    frm = (body.get("from") or "").lower().strip()
+    to = (body.get("to") or "").lower().strip()
+    subject = body.get("subject") or ""
+    text = body.get("text") or body.get("body") or ""
+    msg_id = body.get("message_id") or body.get("id") or f"in_{uuid.uuid4().hex[:12]}"
+    from_domain = frm.rsplit("@", 1)[-1] if "@" in frm else None
+
+    # Best-effort routing
+    school = None
+    if from_domain:
+        school = await db.schools.find_one({"email_domain": from_domain})
+    matched_user = await db.users.find_one({"email": frm})
+
+    doc = {
+        "message_id": msg_id,
+        "from": frm,
+        "to": to,
+        "subject": subject,
+        "text": text[:8000],
+        "received_at": datetime.now(timezone.utc).isoformat(),
+        "school_id": school.get("school_id") if school else None,
+        "matched_user_id": matched_user.get("user_id") if matched_user else None,
+        "matched_role": matched_user.get("role") if matched_user else None,
+    }
+    if doc["school_id"] or doc["matched_user_id"]:
+        await db.inbound_emails.insert_one(doc)
+        target = "school+user" if doc["school_id"] and doc["matched_user_id"] else ("school" if doc["school_id"] else "user")
+    else:
+        await db.inbound_email_unrouted.insert_one(doc)
+        target = "unrouted"
+    return {"ok": True, "routed_to": target, "message_id": msg_id}
+
+
+@api_router.get("/owner/inbound-emails")
+async def owner_inbound_emails(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    routed = await db.inbound_emails.find({}, {"_id": 0}).sort("received_at", -1).to_list(200)
+    unrouted = await db.inbound_email_unrouted.find({}, {"_id": 0}).sort("received_at", -1).to_list(200)
+    return {"routed": routed, "unrouted": unrouted}
+
+
 # ====================== Public app config ======================
 
 @api_router.get("/config")

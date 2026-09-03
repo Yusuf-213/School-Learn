@@ -46,6 +46,9 @@ function buildNav({ user, classes }) {
   if (user?.role === "student") {
     items.push({ to: "/my-record", label: "My record", icon: Trophy, testid: "sn-myrecord" });
   }
+  if (user?.role === "parent" || user?.role === "owner") {
+    items.push({ to: "/parent", label: "Parent portal", icon: Users, testid: "sn-parent" });
+  }
   // Dreams for everyone — including owner — per user request
   items.push({ to: "/dreams", label: "Dreams", icon: Compass, testid: "sn-dreams" });
   items.push({ to: "/suggestions", label: "Feedback", icon: Chat, testid: "sn-suggestions" });
