@@ -47,9 +47,15 @@ PLANS = {
     "standard": {"name": "Standard", "amount": 10.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": False},
     "pro":      {"name": "Pro",      "amount": 15.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": True},
     # School plans (annual). Stripe Checkout creates one-off £ session; activation gives 365 days.
-    "school_small":  {"name": "School · Small (600–1,000 students)",   "amount": 750.00,  "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1000},
-    "school_medium": {"name": "School · Medium (750–1,500 students)",  "amount": 1500.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1500},
-    "school_large":  {"name": "School · Large (1,500+ students)",      "amount": 3000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 99999},
+    "school_small":  {"name": "School · Small (600–1,000 students)",   "amount": 3000.00,   "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1000},
+    "school_medium": {"name": "School · Medium (1,000–1,500 students)","amount": 8000.00,   "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1500},
+    "school_large":  {"name": "School · Large (1,500+ students)",      "amount": 15000.00,  "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 99999},
+    "mat_1_5":       {"name": "MAT · 1–5 schools",                     "amount": 60000.00,  "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 5},
+    "mat_5_10":      {"name": "MAT · 5–10 schools",                    "amount": 100000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 10},
+    "mat_10_30":     {"name": "MAT · 10–30 schools",                   "amount": 400000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 30},
+    "mat_30_50":     {"name": "MAT · 30–50 schools",                   "amount": 600000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 50},
+    "mat_50_80":     {"name": "MAT · 50–80 schools",                   "amount": 900000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 80},
+    "mat_80_100":    {"name": "MAT · 80–100 schools",                  "amount": 1500000.00,"currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 100},
 }
 
 # Owner accounts — global super-admins
@@ -131,7 +137,7 @@ class AIGenerateRequest(BaseModel):
     exam_board: Optional[str] = None  # 'aqa','edexcel','ocr','ib','cie','generic'
 
 class CheckoutCreateRequest(BaseModel):
-    plan_id: Literal["basic", "standard", "pro", "school_small", "school_medium", "school_large"]
+    plan_id: Literal["basic", "standard", "pro", "school_small", "school_medium", "school_large", "mat_1_5", "mat_5_10", "mat_10_30", "mat_30_50", "mat_50_80", "mat_80_100"]
     origin_url: str
 
 class AIChatRequest(BaseModel):
@@ -2391,6 +2397,28 @@ async def owner_inbound_emails(current=Depends(get_current_user)):
     routed = await db.inbound_emails.find({}, {"_id": 0}).sort("received_at", -1).to_list(200)
     unrouted = await db.inbound_email_unrouted.find({}, {"_id": 0}).sort("received_at", -1).to_list(200)
     return {"routed": routed, "unrouted": unrouted}
+
+
+@api_router.get("/owner/stripe/status")
+async def owner_stripe_status(current=Depends(get_current_user)):
+    """Whether Stripe is connected server-side + which mode + tail of key so owner can verify without leaking full secret."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    key = STRIPE_API_KEY or ""
+    connected = bool(key) and (key.startswith("sk_test_") or key.startswith("sk_live_") or key == "sk_test_emergent")
+    mode = "live" if key.startswith("sk_live_") else ("test" if connected else "not_set")
+    tail = key[-6:] if len(key) > 6 else key
+    return {
+        "connected": connected,
+        "mode": mode,
+        "key_tail": tail,
+        "webhook_configured": bool(os.environ.get("STRIPE_WEBHOOK_SECRET")),
+        "instructions": (
+            "STRIPE_API_KEY is set from the Emergent Secrets tab (bottom-left of the editor). "
+            "For live mode, replace 'sk_test_emergent' with your own sk_live_... key. "
+            "Optionally set STRIPE_WEBHOOK_SECRET for signed webhook verification."
+        ),
+    }
 
 
 # ====================== Public app config ======================

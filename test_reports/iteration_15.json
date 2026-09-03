@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 15 tested the 3 requested features. BACKEND: 16/16 pytest cases pass (/app/backend/tests/test_iter15_pricing_stripe_pptx.py) — 3-login regression with correct roles, /api/owner/business/pricing (3 school + 6 MAT tiers, exact GBP values, 403 non-owner, 401 unauth), NEW /api/owner/stripe/status (connected=true, mode=test, key_tail, webhook_configured=false bool, instructions; 403 non-owner), /api/plans + /api/billing/checkout (returns real Stripe url + session_id), and /api/teacher/lessons/{id}/pptx (200 + correct MIME + attachment + PK zip magic + >5KB; owner allowed; 404 missing; 403 cross-school teacher; 401 unauth). FRONTEND: the teacher 'Make PowerPoint' flow works end-to-end (real 39,923-byte .pptx downloaded via UI). CRITICAL: the claimed Owner UI changes DO NOT EXIST — /app/frontend/src/pages/Owner.jsx contains no BusinessPanel, no MAT/school pricing tables and no Stripe status card (grep for BusinessPanel/business-panel/stripe-status/mat-tier/school-tier across all of /app/frontend/src returns ZERO hits), and the live /owner Overview tab renders 0 of the required testids and no 'Stripe' text. So 2 of the 3 requested features are backend-only and invisible to the user.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/owner/business/pricing vs GET /api/plans", "issue": "Price inconsistency: BUSINESS_PRICING school tiers are £3,000/£8,000/£15,000 but the actual chargeable Stripe PLANS are school_small £750, school_medium £1,500, school_large £3,000. Owner-facing pricing and the real checkout amounts disagree — confirm which is intended before surfacing in the UI."},
+      {"endpoint": "GET /api/owner/stripe/status", "issue": "webhook_configured is false because STRIPE_WEBHOOK_SECRET is not set in /app/backend/.env (expected; endpoint returns the correct bool). Also connected=true for the placeholder key 'sk_test_emergent', so 'connected' means 'a key string is present', not 'key is valid with Stripe' — consider a lightweight Stripe ping or renaming to key_present."},
+      {"endpoint": "POST /api/billing/checkout", "issue": "Field is plan_id (not plan) and origin_url is mandatory — the review request/docs say 'plan'. Carried over from iteration 14."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Owner.jsx — Overview tab", "issue": "MAT/school pricing panel is completely missing. No <BusinessPanel/>, no [data-testid=business-panel], no [data-testid=school-tier-Small|Medium|Large], 0 of the 6 [data-testid=mat-tier-*] rows. Verified both by grep over /app/frontend/src (zero hits) and live on /owner (owner-page renders stats + Schools table + suggestions only).", "selector": "[data-testid=business-panel]", "priority": "CRITICAL"},
+      {"component": "Owner.jsx — Overview tab", "issue": "Stripe connection status card missing. No [data-testid=stripe-status]; the working /api/owner/stripe/status endpoint is never called from the frontend (no reference to 'stripe/status' anywhere in /app/frontend/src). Page body contains no 'Stripe' text at all.", "selector": "[data-testid=stripe-status]", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [
+      {"flow": "Owner → business pricing / Stripe status", "issue": "Backend endpoints exist and return 200 for owner, but no frontend code fetches them, so the user-visible requirement (see MAT pricing + connect-Stripe instructions in the app) is unmet.", "affected_selectors": ["[data-testid=business-panel]", "[data-testid=stripe-status]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter15_pricing_stripe_pptx.py",
+    "/app/backend/tests/seed_iter15_ui.py",
+    "/app/test_reports/pytest/iter15.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Actually implement the BusinessPanel in /app/frontend/src/pages/Owner.jsx Overview tab — the claimed edit is not in the file. Needs [data-testid=business-panel] wrapper, rows [data-testid=school-tier-Small|Medium|Large] and 6 [data-testid=mat-tier-*] rows fed from GET /api/owner/business/pricing.",
+    "CRITICAL: Add the Stripe status card [data-testid=stripe-status] to the Owner Overview tab, calling GET /api/owner/stripe/status and rendering connected/mode/key_tail/webhook_configured/instructions (with loading + error states).",
+    "Reconcile BUSINESS_PRICING school tiers (£3k/£8k/£15k) with PLANS school_small/medium/large (£750/£1.5k/£3k) before showing prices to the owner.",
+    "Optional: set STRIPE_WEBHOOK_SECRET so webhook_configured reports true; optionally make 'connected' reflect a real Stripe key validation instead of prefix matching."
+  ],
+  "critical_code_review_comments": [
+    "Owner.jsx (495 lines) has no fetch for /owner/business/pricing or /owner/stripe/status — the feature was reported as done but never landed. Verify with grep before claiming frontend work complete.",
+    "owner_stripe_status() treats any sk_test_/sk_live_ prefixed string as connected=true, so the placeholder 'sk_test_emergent' reports a healthy connection; the owner cannot distinguish 'placeholder key' from 'real test key'.",
+    "lesson_pptx() still imports python-pptx inside the handler and builds the deck synchronously on the event loop (carry-over from iteration 14) — offload to a threadpool if decks get large.",
+    "POST /api/teacher/lessons ignores a supplied plan (LessonCreate has no plan field), so a non-AI lesson is always created plan-less and needs a follow-up PATCH — consider accepting an optional plan on create.",
+    "server.py is now 3,521 lines — split into routers (auth, school, teacher, billing, owner, legal)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter15_pricing_stripe_pptx.py",
+    "/app/backend/tests/seed_iter15_ui.py"
+  ],
+  "success_rate": {"backend": "100% (16/16 pytest cases)", "frontend": "33% (1 of 3 features visible in UI: PPTX works; MAT pricing panel and Stripe status card absent)"},
+  "seed_data_creation": "Throwaway teachers t15_own_*/t15_cross_*@qa-iter15.co.uk (pytest) and t15_ui_teacher@qa-iter15.co.uk (UI) created via public /auth/register then role/school_id patched directly in mongo, plus 2 TEST_ lessons with plans PATCHed in (use_ai=false, no AI spend). All deleted — verified 0 leftover qa-iter15 users and 0 Iter15 lessons.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "owner yusufm_1@outlook.com/The_Underdog (200, role owner), co-owner khalida700@hotmail.co.uk/The_Underdog (200, role owner), school_admin tester@tester.org/123 (200, role school_admin) — all verified.",
+  "context_for_next_testing_agent": "Run `python -m pytest tests/test_iter15_pricing_stripe_pptx.py -v -p no:randomly` from /app/backend (16/16 green). API contract gotchas learned this pass: (1) /auth/register always creates role=individual with school_id=null — patch role/school_id directly in mongo (emails are lowercased, assert matched_count==1); (2) LessonCreate accepts NO plan field — create with use_ai:false then PATCH /api/teacher/lessons/{id} {plan:{...}}; (3) year_group must be a UK code like uk_y7; (4) plans list endpoint is GET /api/plans (not /api/billing/plans) and checkout body is {plan_id, origin_url}; (5) login returns 'token' not 'access_token'; (6) owner login does NOT trigger the DPA gate, freshly-registered teachers DO — click [data-testid=dpa-gate-accept]; (7) UI seed helper: `python tests/seed_iter15_ui.py` then `... clean`. Frontend still to verify after the fix: Owner Overview business-panel + stripe-status testids.",
+  "rca_of_the_issue": "The two missing frontend features are not a rendering/routing bug — the code was never written. /app/frontend/src/pages/Owner.jsx Overview branch renders only the Stat grid, the Schools table and Recent suggestions; there is no BusinessPanel component defined or referenced anywhere in the repo, and no frontend module calls /owner/business/pricing or /owner/stripe/status (grep across /app/frontend/src: zero matches). Reproduction: log in as owner → /owner → Overview → 0 matches for [data-testid=business-panel], [data-testid=stripe-status], school-tier-*, mat-tier-*; page text contains no 'Stripe' or '1,500,000'. Backend side of both features is correct and fully covered by passing tests, so only the UI layer needs implementing. The PPTX feature is genuinely complete: UI click on [data-testid=lesson-make-pptx] downloaded Learnify-TEST__UI_Iter15_Lesson-20260903.pptx (39,923 bytes, PK zip magic)."
+}

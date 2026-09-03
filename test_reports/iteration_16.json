@@ -1,0 +1,31 @@
+{
+  "summary": "Frontend-only re-verification of iteration_15 claims. CONFIRMED: the previous iteration's 'BusinessPanel missing' finding was a FALSE NEGATIVE. Live preview as owner (yusufm_1@outlook.com) -> /owner Overview renders [data-testid=business-panel] (visible) with EXACTLY 3 school-tier rows (school-tier-Small £3,000 / 600-1,000 students, school-tier-Medium £8,000 / 1,000-1,500, school-tier-Large £15,000 / 1,500+) and EXACTLY 6 mat-tier rows (MAT 1-5 £60,000, 5-10 £100,000, 10-30 £400,000, 30-50 £600,000, 50-80 £900,000, 80-100 £1,500,000) plus [data-testid=stripe-status] showing 'Stripe connected', Mode: test, key tail ...ergent, Webhook: unsigned, and instructions text mentioning 'Emergent Secrets'. No console errors, no error elements. Teacher PPTX flow re-verified end-to-end: seeded teacher -> /teacher -> lesson with plan -> [data-testid=lesson-make-pptx] downloaded Learnify-TEST__UI_Iter15_Lesson-20260903.pptx, 39,923 bytes, PK zip magic (>5KB). Both requested features PASS.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AppLayout sidebar header (all pages)", "issues": ["An empty white rectangle (~40x28px) renders immediately to the right of the 'Learnify' wordmark in the sidebar header; it contains no image (page has only the Google avatar img) and no visible label — looks like an unstyled/blank button or placeholder container."]},
+      {"screen": "Owner Overview business panel", "issues": ["Cosmetic only: bg-mint (#E6F7EB) / bg-butter (#FFF9E6) card tints are so light they read as plain white against the #F7F7F2 page, so the two pricing cards are visually indistinguishable from each other."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter15_pricing_stripe_pptx.py", "/app/backend/tests/seed_iter15_ui.py"],
+  "action_items": [
+    "No functional fixes required for the two features under test — both verified live.",
+    "Optional: remove/label the blank element next to the sidebar 'Learnify' wordmark.",
+    "Carry-over from iteration_15 (not re-tested, backend): reconcile BUSINESS_PRICING school tiers (£3k/£8k/£15k) now shown in the UI with the chargeable /api/plans values (£750/£1.5k/£3k) — the owner UI currently advertises prices that don't match checkout."
+  ],
+  "critical_code_review_comments": [
+    "BusinessPanel in Owner.jsx swallows both fetch errors with `.catch(() => {})` and renders nothing when pricing/stripe are null — there is no loading skeleton and no error state, so an API failure looks identical to 'feature missing' (exactly the ambiguity that caused the previous false negative). Add a loading indicator and an error message with data-testids.",
+    "Owner.jsx is 544 lines with 3 panels inline (BusinessPanel, PromoCodesPanel, DpaAcceptancesPanel) — extract into components/owner/*.jsx.",
+    "Login page testids are login-email-input / login-password-input / login-submit-btn (NOT login-email/login-password/login-submit) — keep naming consistent across the app."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested this iteration (frontend-only request)", "frontend": "100% (2/2 requested flows pass)"},
+  "seed_data_creation": "Ran `python tests/seed_iter15_ui.py` to create t15_ui_teacher@qa-iter15.co.uk / Qa!Passw0rd15 + lesson 'TEST_ UI Iter15 Lesson' with a plan; cleaned up afterwards with `... clean` (1 lesson, 1 user deleted).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "owner yusufm_1@outlook.com/The_Underdog (works, no DPA gate); seeded teacher creds above (deleted after test); tester@tester.org/123 not needed this pass.",
+  "context_for_next_testing_agent": "Login testids: [data-testid=login-email-input], [data-testid=login-password-input], [data-testid=login-submit-btn]. Freshly-registered users hit the DPA gate -> click [data-testid=dpa-gate-accept]; owner does not. Owner Overview business-panel + stripe-status are CONFIRMED PRESENT and correct as of iteration 16 — do not re-flag. PPTX: teacher -> /teacher -> click the lesson card -> [data-testid=lesson-make-pptx] triggers a real browser download (use page.expect_download).",
+  "rca_of_the_issue": "Iteration_15's CRITICAL 'BusinessPanel does not exist' finding was a stale filesystem/grep read (and/or a page inspected before hot-reload landed). Re-tested purely against the live preview URL: business-panel, 3 school tiers, 6 MAT tiers and stripe-status all render with the exact expected values. Root-cause contributor on the app side: BusinessPanel renders literally nothing while pricing/stripe are null and silently swallows fetch errors, so 'not implemented' and 'fetch failed' are indistinguishable in the DOM."
+}

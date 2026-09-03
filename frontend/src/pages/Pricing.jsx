@@ -8,16 +8,23 @@ import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
 const FEATURES = {
-  free: ["5 AI generations per day", "Browse all subjects", "Homework help", { neg: true, text: "No practice papers" }],
-  basic: ["30 AI generations per day", "All subjects unlocked", "Generic practice papers", "Flashcards & quizzes", "AI tutor chat"],
-  standard: ["Unlimited AI generations", "All subjects unlocked", "Full practice papers + PDF", "Unlimited AI tutor", "Priority queue"],
-  pro: ["Everything in Standard", "Exam-board papers (AQA, Edexcel, OCR, IB, CIE)", "GCSE / A-Level / IB style", "Priority support"],
-  school_small:  ["Everything in Pro for every student", "600–1,000 student licence", "Teacher panel + lesson planner", "AI homework analysis (class + per-student)", "Detentions, attendance, achievements", "Invoice billing available"],
-  school_medium: ["Everything in Pro for every student", "750–1,500 student licence", "Teacher panel + lesson planner", "AI homework analysis (class + per-student)", "Detentions, attendance, achievements", "Invoice billing + onboarding"],
-  school_large:  ["Everything in Pro for every student", "1,500+ student licence", "Teacher panel + lesson planner", "AI homework analysis (class + per-student)", "Detentions, attendance, achievements", "Dedicated success manager"],
+  free:          ["5 AI generations per day", "Browse all subjects", "Homework help", { neg: true, text: "No practice papers" }],
+  basic:         ["50 AI generations per day", "All subjects", "Homework help", "Basic progress tracking"],
+  standard:      ["Everything in Basic", "AI-generated mock papers", "Exam-board picker", "Extended progress reports"],
+  pro:           ["Everything in Standard", "Unlimited generations", "All exam boards", "Priority support"],
+  school_small:  ["Everything in Pro for every student", "600–1,000 student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Invoice billing available"],
+  school_medium: ["Everything in Pro for every student", "1,000–1,500 student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Invoice billing + onboarding"],
+  school_large:  ["Everything in Pro for every student", "1,500+ student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Dedicated success manager"],
+  mat_1_5:       ["Everything in School plans", "1–5 schools licenced", "Central MAT dashboard", "Consolidated billing", "SLA support"],
+  mat_5_10:      ["Everything in MAT 1–5", "Up to 10 schools", "Trust-wide analytics", "Named account manager"],
+  mat_10_30:     ["Everything in MAT 5–10", "Up to 30 schools", "Trust-wide governance", "Priority engineering support"],
+  mat_30_50:     ["Everything in MAT 10–30", "Up to 50 schools", "Multi-region deployment", "Bespoke onboarding"],
+  mat_50_80:     ["Everything in MAT 30–50", "Up to 80 schools", "Custom SLAs", "Dedicated success team"],
+  mat_80_100:    ["Everything in MAT 50–80", "Up to 100 schools", "White-glove migration", "Board-level reporting"],
 };
-const ICONS = { free: Sparkle, basic: Sparkle, standard: Sparkle, pro: Crown, school_small: Buildings, school_medium: Buildings, school_large: Buildings };
-const ACCENTS = { free: "bg-white", basic: "bg-mint", standard: "bg-butter", pro: "bg-lavender", school_small: "bg-peach", school_medium: "bg-peach", school_large: "bg-peach" };
+
+const ICONS = { free: Sparkle, basic: Sparkle, standard: Sparkle, pro: Crown, school_small: Buildings, school_medium: Buildings, school_large: Buildings, mat_1_5: Buildings, mat_5_10: Buildings, mat_10_30: Buildings, mat_30_50: Buildings, mat_50_80: Buildings, mat_80_100: Buildings };
+const ACCENTS = { free: "bg-white", basic: "bg-mint", standard: "bg-butter", pro: "bg-lavender", school_small: "bg-peach", school_medium: "bg-peach", school_large: "bg-peach", mat_1_5: "bg-mint", mat_5_10: "bg-mint", mat_10_30: "bg-mint", mat_30_50: "bg-mint", mat_50_80: "bg-mint", mat_80_100: "bg-mint" };
 
 export default function Pricing() {
   const { user } = useAuth();
@@ -55,7 +62,8 @@ export default function Pricing() {
 
   const individualIds = ["free", "basic", "standard", "pro"];
   const schoolIds = ["school_small", "school_medium", "school_large"];
-  const shown = tab === "individual" ? individualIds : schoolIds;
+  const matIds = ["mat_1_5", "mat_5_10", "mat_10_30", "mat_30_50", "mat_50_80", "mat_80_100"];
+  const shown = tab === "individual" ? individualIds : tab === "mat" ? matIds : schoolIds;
   const cards = shown.map((id) => plans.find((p) => p.id === id)).filter(Boolean);
 
   const inner = (
@@ -81,6 +89,8 @@ export default function Pricing() {
             className={`px-4 py-2 rounded font-bold text-sm ${tab === "individual" ? "bg-ink text-white" : ""}`}>Individuals</button>
           <button onClick={() => setTab("school")} data-testid="pricing-tab-school"
             className={`px-4 py-2 rounded font-bold text-sm ${tab === "school" ? "bg-ink text-white" : ""}`}>Schools</button>
+          <button onClick={() => setTab("mat")} data-testid="pricing-tab-mat"
+            className={`px-4 py-2 rounded font-bold text-sm ${tab === "mat" ? "bg-ink text-white" : ""}`}>MATs</button>
         </div>
       </div>
 
@@ -100,7 +110,7 @@ export default function Pricing() {
                 <span className="text-sm text-[#4A4A4A] ml-1">/{p.period}</span>
               </div>
               <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A] mb-4">
-                {p.id.startsWith("school") ? "Per school, whole-school licence" : "Per student"}
+                {p.id.startsWith("mat") ? "Per MAT, whole-trust licence" : p.id.startsWith("school") ? "Per school, whole-school licence" : "Per student"}
               </div>
               <ul className="space-y-2 text-sm mb-6 grow">
                 {(FEATURES[p.id] || []).map((f, i) => {
@@ -124,6 +134,10 @@ export default function Pricing() {
               ) : p.id.startsWith("school") ? (
                 <Link to="/signup/school" className="brutal-btn bg-ink text-white text-center" data-testid={`plan-cta-${p.id}`}>
                   Register your school
+                </Link>
+              ) : p.id.startsWith("mat") ? (
+                <Link to="/contact" className="brutal-btn bg-ink text-white text-center" data-testid={`plan-cta-${p.id}`}>
+                  Contact sales
                 </Link>
               ) : (
                 <button onClick={() => subscribe(p.id)} disabled={loading === p.id}

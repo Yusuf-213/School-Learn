@@ -190,3 +190,23 @@
 ### Owner credentials (unchanged)
 - Username `Yusufm_1` / Email `Yusufm_1@outlook.com` / Password `The_Underdog`.
 - Note: owner's seeded password bypasses the new password policy (still works to sign in). New users created via the public flow must meet 10-char + complexity.
+
+
+## Iteration 17 — Public Pricing (Individuals / Schools / MATs) — 2026-02-03
+
+### Done
+- `Pricing.jsx` now shows all three tabs: **Individuals**, **Schools**, **MATs** (previously the MAT tab was missing from the toggle).
+- MAT tier grid (6 cards) verified live: £60k / £100k / £400k / £600k / £900k / £1.5m per year.
+- MAT cards display "Per MAT, whole-trust licence" and route to `/contact` via a **Contact sales** CTA (avoids Stripe self-checkout on enterprise tiers).
+- School tier CTAs continue to route to `/signup/school`; Individual tiers still use direct Stripe checkout.
+- Backend `/api/plans` confirmed to return all 13 tiers.
+
+### Verified
+- Screenshot verification on all 3 tabs (Individuals, Schools, MATs) — pass.
+- `data-testid` present on tab buttons and every plan card.
+
+### Backlog (unchanged priority)
+- P1 verify: "Make PowerPoint" end-to-end from Teacher UI.
+- P1 verify: Email Auto-sort webhook → Owner unrouted inbox.
+- P2: Refactor `server.py` (>3100 lines) into modular routers.
+- P2: Deep AI curriculum-aware prompt mapping for Dreams feature.

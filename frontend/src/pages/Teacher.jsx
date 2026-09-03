@@ -139,9 +139,35 @@ function LessonsTab() {
 
 function LessonPlanView({ lesson }) {
   const p = lesson.plan || {};
+  const [dl, setDl] = useState(false);
+  const makePptx = async () => {
+    setDl(true);
+    try {
+      const res = await api.get(`/teacher/lessons/${lesson.lesson_id}/pptx`, { responseType: "blob" });
+      const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }));
+      const a = document.createElement("a");
+      const cd = res.headers["content-disposition"] || "";
+      const m = cd.match(/filename="?([^"]+)"?/);
+      a.href = url; a.download = m?.[1] || `${(lesson.title || "lesson").replace(/\s+/g, "-")}.pptx`;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e?.response?.data?.detail || "Could not generate PowerPoint");
+    } finally { setDl(false); }
+  };
   return (
     <div className="brutal-card p-6 bg-white" data-testid="lesson-plan-view">
-      <h3 className="font-display font-extrabold text-2xl">{p.title || lesson.title}</h3>
+      <div className="flex flex-wrap justify-between items-start gap-3">
+        <h3 className="font-display font-extrabold text-2xl">{p.title || lesson.title}</h3>
+        <button
+          onClick={makePptx}
+          disabled={dl}
+          className="brutal-btn bg-mint hover:bg-white inline-flex items-center gap-2 disabled:opacity-60"
+          data-testid="lesson-make-pptx"
+        >
+          {dl ? "Building…" : "Make PowerPoint"}
+        </button>
+      </div>
       {p.objectives?.length > 0 && (
         <div className="mt-3">
           <div className="text-xs uppercase tracking-[0.2em] font-bold">Learning objectives</div>
