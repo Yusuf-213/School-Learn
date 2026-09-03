@@ -1,6 +1,7 @@
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { GraduationCap, House, BookOpen, ChartLine, CreditCard, Question, SignIn, List, X, SignOut, ChalkboardTeacher, Compass, Chat, Crown, Trophy, ShieldCheck, Bank } from "@phosphor-icons/react";
+import { displayHandle, displayInitial } from "@/lib/displayName";
+import { GraduationCap, House, BookOpen, ChartLine, CreditCard, Question, SignIn, List, X, SignOut, ChalkboardTeacher, Compass, Chat, Crown, Trophy, ShieldCheck, Bank } from "@phosphor-icons/react"; // eslint-disable-line no-unused-vars
 import { useState } from "react";
 import AccessibilityMenu from "@/components/AccessibilityMenu";
 
@@ -71,10 +72,12 @@ export default function GlobalNav() {
     <header className="sticky top-0 z-40 bg-paper/95 backdrop-blur border-b-2 border-ink">
       <div className="max-w-7xl mx-auto px-4 md:px-6 py-3 flex items-center justify-between gap-3">
         <Link to={user ? "/dashboard" : "/"} className="flex items-center gap-2 shrink-0" data-testid="globalnav-brand">
-          <div className="border-2 border-ink rounded-md bg-mint p-1.5 shadow-brutal">
-            <GraduationCap size={20} weight="duotone" />
-          </div>
-          <span className="font-display font-black text-xl tracking-tight">Learnify</span>
+          <img
+            src="/learnify-wordmark-64.png"
+            alt="Learnify"
+            className="h-9 md:h-10 w-auto"
+            data-testid="globalnav-logo"
+          />
         </Link>
 
         <nav className="hidden lg:flex items-center gap-1 flex-wrap" data-testid="globalnav-desktop">
@@ -103,10 +106,10 @@ export default function GlobalNav() {
                   <img src={user.picture} alt="" className="w-6 h-6 rounded-full border border-ink" />
                 ) : (
                   <span className="w-6 h-6 rounded-full bg-peach border border-ink flex items-center justify-center text-xs font-bold">
-                    {user.name?.[0]?.toUpperCase() || "U"}
+                    {displayInitial(user)}
                   </span>
                 )}
-                <span className="text-sm font-bold">{user.name?.split(" ")[0] || "Me"}</span>
+                <span className="text-sm font-bold">{displayHandle(user)}</span>
               </span>
               <button onClick={handleLogout} data-testid="globalnav-logout"
                 className="brutal-btn bg-white hover:bg-peach text-sm inline-flex items-center gap-1.5 py-1.5 px-2.5">

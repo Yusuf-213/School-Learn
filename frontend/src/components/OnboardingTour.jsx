@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { displayHandle } from "@/lib/displayName";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { ChalkboardTeacher, Users, GraduationCap, X, ArrowRight, CheckCircle } from "@phosphor-icons/react";
@@ -87,7 +88,7 @@ export default function OnboardingTour() {
         <div className={`${step.bg} border-b-2 border-ink p-6`}>
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] font-bold">
-              <span>Welcome, {user?.name || "Admin"}</span>
+              <span>Welcome, {user ? displayHandle(user) : "Admin"}</span>
               <span>·</span>
               <span data-testid="onboarding-step-indicator">Step {state.step + 1} of {STEPS.length}</span>
             </div>

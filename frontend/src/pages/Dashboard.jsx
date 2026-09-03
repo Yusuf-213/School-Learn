@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { displayHandle } from "@/lib/displayName";
 import AppLayout from "@/components/AppLayout";
 import GradeLevelSelect from "@/components/GradeLevelSelect";
 import { SUBJECTS, gradeLevelLabel } from "@/lib/subjects";
@@ -88,7 +89,7 @@ export default function Dashboard() {
           <div>
             <div className="text-xs tracking-[0.2em] uppercase font-bold mb-2 text-[#4A4A4A]">Dashboard</div>
             <h1 className="font-display font-black text-4xl sm:text-5xl tracking-tight">
-              Hello, {user?.name?.split(" ")[0] || "Scholar"}.
+              Hello, {user ? displayHandle(user) : "Scholar"}.
             </h1>
             <p className="text-[#4A4A4A] mt-2">Currently studying at <strong className="text-ink">{gradeLabel}</strong> level.</p>
           </div>

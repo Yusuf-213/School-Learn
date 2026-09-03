@@ -61,7 +61,7 @@ export default function Login() {
                   data-testid="login-email-input"
                   required value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="you@school.edu  or  Yusufm_1"
+                  placeholder="you@school.edu  or  username"
                   className="mt-2 brutal-input w-full"
                 />
               </label>

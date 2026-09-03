@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { NavLink, Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
+import { displayHandle, displayInitial } from "@/lib/displayName";
 import { api } from "@/lib/api";
 import { findSubject } from "@/lib/subjects";
 import AccessibilityMenu from "@/components/AccessibilityMenu";
@@ -188,8 +189,13 @@ export default function SideNav({ mobileOpen, onMobileClose }) {
       >
         <div className="flex items-center justify-between px-4 py-4 border-b border-slate-800">
           <Link to="/dashboard" className="flex items-center gap-2" data-testid="side-nav-brand">
-            <div className="border border-indigo-500/50 rounded-md bg-indigo-600/20 p-1.5">
-              <GraduationCap size={18} weight="duotone" />
+            <div className="bg-white rounded-md p-1 shadow-brutal border border-white/40">
+              <img
+                src="/learnify-mark-64.png"
+                alt="Learnify"
+                className="h-6 w-6 object-contain"
+                data-testid="side-nav-logo"
+              />
             </div>
             <span className="font-display font-black text-lg tracking-tight">Learnify</span>
           </Link>
@@ -228,11 +234,11 @@ export default function SideNav({ mobileOpen, onMobileClose }) {
               <img src={user.picture} alt="" className="w-8 h-8 rounded-full" />
             ) : (
               <div className="w-8 h-8 rounded-full bg-indigo-500/30 flex items-center justify-center text-sm font-bold">
-                {user.name?.[0]?.toUpperCase() || "U"}
+                {displayInitial(user)}
               </div>
             )}
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-bold truncate">{user.name || "User"}</div>
+              <div className="text-xs font-bold truncate">{displayHandle(user)}</div>
               <div className="text-[10px] uppercase tracking-widest text-slate-400 truncate">{user.role}</div>
             </div>
           </div>

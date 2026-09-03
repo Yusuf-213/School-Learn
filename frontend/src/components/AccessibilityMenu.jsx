@@ -26,7 +26,7 @@ export default function AccessibilityMenu() {
   return (
     <>
       <button onClick={() => setOpen(true)} data-testid="a11y-open"
-        className="brutal-btn bg-white hover:bg-butter text-sm py-1.5 px-2.5 inline-flex items-center gap-1.5"
+        className="brutal-btn bg-white hover:bg-butter text-ink text-sm py-1.5 px-2.5 inline-flex items-center gap-1.5"
         aria-label="Accessibility options" title="Accessibility">
         <Eye size={16} weight="bold" />
       </button>
