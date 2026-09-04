@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import GlobalNav from "@/components/GlobalNav";
 import { api } from "@/lib/api";
-import { CheckCircle, Sparkle, Crown, Buildings, XCircle, ArrowsClockwise, Prohibit } from "@phosphor-icons/react";
+import { CheckCircle, Sparkle, Crown, Buildings, XCircle, ArrowsClockwise, Prohibit, EnvelopeSimple } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -32,7 +32,6 @@ export default function Pricing() {
   const [plans, setPlans] = useState([]);
   const [billing, setBilling] = useState(null);
   const [loading, setLoading] = useState(null);
-  const [tab, setTab] = useState("individual");
   const [cancelBusy, setCancelBusy] = useState(false);
 
   const refreshBilling = async () => {
@@ -95,10 +94,7 @@ export default function Pricing() {
   };
 
   const individualIds = ["free", "basic", "standard", "pro"];
-  const schoolIds = ["school_small", "school_medium", "school_large"];
-  const matIds = ["mat_1_5", "mat_5_10", "mat_10_30", "mat_30_50", "mat_50_80", "mat_80_100"];
-  const shown = tab === "individual" ? individualIds : tab === "mat" ? matIds : schoolIds;
-  const cards = shown.map((id) => plans.find((p) => p.id === id)).filter(Boolean);
+  const cards = individualIds.map((id) => plans.find((p) => p.id === id)).filter(Boolean);
 
   const inner = (
     <div className="max-w-6xl mx-auto space-y-10">
@@ -166,16 +162,11 @@ export default function Pricing() {
 
       <div className="flex justify-center">
         <div className="border-2 border-ink rounded-md p-1 bg-white inline-flex shadow-brutal">
-          <button onClick={() => setTab("individual")} data-testid="pricing-tab-individual"
-            className={`px-4 py-2 rounded font-bold text-sm ${tab === "individual" ? "bg-ink text-white" : ""}`}>Individuals</button>
-          <button onClick={() => setTab("school")} data-testid="pricing-tab-school"
-            className={`px-4 py-2 rounded font-bold text-sm ${tab === "school" ? "bg-ink text-white" : ""}`}>Schools</button>
-          <button onClick={() => setTab("mat")} data-testid="pricing-tab-mat"
-            className={`px-4 py-2 rounded font-bold text-sm ${tab === "mat" ? "bg-ink text-white" : ""}`}>MATs</button>
+          <button data-testid="pricing-tab-individual" className="px-4 py-2 rounded font-bold text-sm bg-ink text-white">Individuals</button>
         </div>
       </div>
 
-      <div className={`grid gap-4 ${tab === "individual" ? "lg:grid-cols-4 md:grid-cols-2" : "lg:grid-cols-3 md:grid-cols-2"}`}>
+      <div className="grid gap-4 lg:grid-cols-4 md:grid-cols-2">
         {cards.map((p) => {
           const Icon = ICONS[p.id] || Sparkle;
           const isCurrent = billing?.tier === p.id;
@@ -233,8 +224,29 @@ export default function Pricing() {
       </div>
 
       <p className="text-xs text-[#4A4A4A] text-center max-w-2xl mx-auto">
-        Prices in GBP. School plans are annual whole-school licences. Test mode — no real charges on the demo.
+        Prices in GBP (£). Individual plans billed monthly · cancel anytime.
       </p>
+
+      <div className="brutal-card p-6 bg-lavender max-w-3xl mx-auto" data-testid="pricing-schools-contact">
+        <div className="flex items-start gap-3">
+          <div className="border-2 border-ink bg-white rounded-md p-2 shadow-brutal shrink-0">
+            <Buildings size={22} weight="duotone" />
+          </div>
+          <div className="grow">
+            <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">Schools · MATs · Districts</div>
+            <div className="font-display font-bold text-xl mt-1">Whole-school & multi-academy trust licences</div>
+            <p className="text-sm text-[#333] mt-2">
+              Every school and MAT gets a bespoke annual quote — pupil count, MAT-wide dashboards,
+              procurement paperwork, invoicing terms, onboarding. Contact us for pricing and a demo.
+            </p>
+            <a href="mailto:schoollearnsupport@pm.me?subject=Learnify%20school%20%2F%20MAT%20enquiry&body=Hi%20Learnify%20team%2C%0A%0AWe%27d%20like%20to%20discuss%20a%20whole-school%20or%20MAT%20licence.%0A%0A-%20Organisation%20name%3A%20%0A-%20Number%20of%20schools%2Fpupils%3A%20%0A-%20Preferred%20start%20date%3A%20%0A-%20Anything%20else%20we%20should%20know%3A%20%0A%0AThanks."
+               className="brutal-btn bg-ink text-white inline-flex items-center gap-2 mt-4"
+               data-testid="pricing-schools-contact-btn">
+              <EnvelopeSimple size={16} weight="bold" /> Contact us for schools pricing
+            </a>
+          </div>
+        </div>
+      </div>
 
       <div className="brutal-card p-5 bg-butter text-center max-w-3xl mx-auto" data-testid="pricing-custom-plan-banner">
         <div className="text-xs uppercase tracking-[0.2em] font-bold mb-1 text-[#4A4A4A]">Need something different?</div>

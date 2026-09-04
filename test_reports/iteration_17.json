@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 17 full-flow test of (a) public Pricing page individuals-only + Schools/MAT contact card, (b) Owner HQ custom Stripe Payment Link generator (create/list/archive), (c) auth + validation on the new owner endpoints, (d) billing/plans/promo/DPA regressions. Backend: 21/21 pytest assertions pass (new file test_iter17_payment_links.py). Frontend: pricing page and Owner Payment Links panel fully functional end-to-end (real Stripe test checkout URL minted from the UI, listed in the table, archived successfully).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Owner HQ > Payment Links",
+        "issues": [
+          "GBP amounts render with a single decimal for non-round values: £4,321.5 instead of £4,321.50 (Number().toLocaleString('en-GB') without minimumFractionDigits/maximumFractionDigits: 2). Affects both [data-testid=pl-last-created] and the table Amount column."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter17_payment_links.py",
+    "/app/test_reports/pytest/iter17.xml"
+  ],
+  "action_items": [
+    "Optional polish: format GBP amounts in Owner PaymentLinksPanel with 2 decimal places (minimumFractionDigits: 2).",
+    "Optional: consider a filter/hide toggle for archived links since rows accumulate indefinitely in the table."
+  ],
+  "critical_code_review_comments": [
+    "POST /api/owner/billing/payment-link validation order is correct (owner check -> amount -> currency -> label) and all responses strip Mongo _id; verified.",
+    "PATCH endpoint whitelists status to {active, archived} and returns 404 for unknown link_id, 400 for empty body — verified.",
+    "Owner.jsx is 809 lines — consider splitting PaymentLinksPanel / PromoPanel / DPA panel into separate files (file-size guideline >700 lines)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter17_payment_links.py"
+  ],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "100% of tested flows"},
+  "seed_data_creation": "Created 2 TEST_-prefixed owner payment links (one via API, one via UI: 'TEST_UI Bespoke MAT licence' £4321.50, mat_1_5) — both left in DB (archived); no API delete exists by design.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Owner Yusufm_1@outlook.com / The_Underdog (DPA already accepted, no gate shown); Tester@tester.org / 123 used for 403 checks",
+  "context_for_next_testing_agent": "Verified: /pricing shows exactly 4 individual cards (free £0, basic £5, standard £10, pro £15 /month), only [data-testid=pricing-tab-individual] exists (no pricing-tab-school / pricing-tab-mat), [data-testid=pricing-schools-contact] visible with mailto:schoollearnsupport@pm.me, no 'Test mode' text anywhere on public page, 'Prices in GBP (£)' footnote present. Owner tab testid is 'tab-promo' (NOT tab-promos); tabs = tab-overview, tab-promo, tab-links, tab-dpa. Payment Links panel: pl-stripe-mode shows 'Test mode — no real charges …ergent'; category preset mat_1_5 correctly changed amount 3000 -> 200000; create returned cs_test_ URL + toast 'Payment link created'; pl-last-created with Copy/Open; table row showed mat_1_5 / TEST mode / ACTIVE / payment 'initiated'; archive flipped status to ARCHIVED and hid the Archive button. Backend regressions: /api/billing/checkout requires origin_url in body (basic+pro return checkout.stripe.com URLs), /api/billing/me returns cancel_at_period_end+lifetime, /api/plans returns 13 GBP tiers, promo endpoint is /api/owner/promo_codes (HWA26 present), DPA doc endpoint is /api/legal/dpa (v2.0), /api/config support_email correct. No 4xx/5xx API calls observed during UI flows.",
+  "rca_of_the_issue": "No defects found in the requested features. Three initial pytest failures were my own wrong endpoint paths/payload (billing/checkout needs origin_url; promo endpoint uses underscore; DPA doc at /legal/dpa) — corrected in the test file, all pass."
+}

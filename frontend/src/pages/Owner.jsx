@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { Buildings, Users, BookOpen, Lightning, ChartLineUp, Chat, Crown, Ticket, ShieldCheck, DownloadSimple, Plus } from "@phosphor-icons/react";
+import { Buildings, Users, BookOpen, Lightning, ChartLineUp, Chat, Crown, Ticket, ShieldCheck, DownloadSimple, Plus, Link as LinkIcon, Copy, Archive } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 export default function Owner() {
@@ -51,6 +51,7 @@ export default function Owner() {
         <div className="flex flex-wrap gap-2 border-b-2 border-ink pb-3" data-testid="owner-tabs">
           <TabBtn active={tab === "overview"} onClick={() => setTab("overview")} testid="tab-overview">Overview</TabBtn>
           <TabBtn active={tab === "promo"} onClick={() => setTab("promo")} testid="tab-promo"><Ticket size={14} weight="bold" /> Promo Codes</TabBtn>
+          <TabBtn active={tab === "links"} onClick={() => setTab("links")} testid="tab-links"><LinkIcon size={14} weight="bold" /> Payment Links</TabBtn>
           <TabBtn active={tab === "dpa"} onClick={() => setTab("dpa")} testid="tab-dpa"><ShieldCheck size={14} weight="bold" /> DPA Acceptances</TabBtn>
         </div>
 
@@ -133,6 +134,7 @@ export default function Owner() {
         )}
 
         {tab === "promo" && <PromoCodesPanel />}
+        {tab === "links" && <PaymentLinksPanel />}
         {tab === "dpa" && <DpaAcceptancesPanel />}
         {tab === "overview" && <BusinessPanel />}
       </div>
@@ -383,6 +385,269 @@ function PromoCodesPanel() {
                 {codes.length === 0 && (
                   <tr><td colSpan={8} className="p-6 text-center text-[#4A4A4A]">No promo codes yet.</td></tr>
                 )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// ---------------- Owner custom Stripe payment links ----------------
+
+const CATEGORY_PRESETS = [
+  { id: "school_small",  name: "School · Small (600–1,000 students)",    suggested: 3000 },
+  { id: "school_medium", name: "School · Medium (1,000–1,500 students)", suggested: 8000 },
+  { id: "school_large",  name: "School · Large (1,500+ students)",       suggested: 15000 },
+  { id: "mat_1_5",       name: "MAT · 1–5 schools",                       suggested: 200000 },
+  { id: "mat_5_10",      name: "MAT · 5–10 schools",                      suggested: 400000 },
+  { id: "mat_10_30",     name: "MAT · 10–30 schools",                     suggested: 600000 },
+  { id: "mat_30_50",     name: "MAT · 30–50 schools",                     suggested: 800000 },
+  { id: "mat_50_80",     name: "MAT · 50–80 schools",                     suggested: 1000000 },
+  { id: "mat_80_100",    name: "MAT · 80–100 schools",                    suggested: 2000000 },
+  { id: "custom",        name: "Custom / bespoke",                        suggested: "" },
+];
+
+function PaymentLinksPanel() {
+  const [links, setLinks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [stripe, setStripe] = useState(null);
+  const [form, setForm] = useState({
+    label: "",
+    category: "school_small",
+    amount: 3000,
+    customer_email: "",
+    expires_in_days: 30,
+    notes: "",
+  });
+  const [lastCreated, setLastCreated] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [{ data }, s] = await Promise.all([
+        api.get("/owner/billing/payment-links"),
+        api.get("/owner/stripe/status"),
+      ]);
+      setLinks(data.links || []);
+      setStripe(s.data);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not load payment links");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const onCategoryChange = (id) => {
+    const preset = CATEGORY_PRESETS.find((c) => c.id === id);
+    setForm((f) => ({
+      ...f,
+      category: id,
+      amount: preset && preset.suggested !== "" ? preset.suggested : f.amount,
+    }));
+  };
+
+  const createLink = async (e) => {
+    e.preventDefault();
+    const amt = Number(form.amount);
+    if (!form.label.trim()) { toast.error("Label is required"); return; }
+    if (!Number.isFinite(amt) || amt <= 0) { toast.error("Amount must be greater than 0"); return; }
+    setCreating(true);
+    try {
+      const { data } = await api.post("/owner/billing/payment-link", {
+        label: form.label.trim(),
+        category: form.category,
+        amount: amt,
+        currency: "gbp",
+        customer_email: form.customer_email || null,
+        expires_in_days: form.expires_in_days ? Number(form.expires_in_days) : null,
+        notes: form.notes || null,
+      });
+      setLastCreated(data);
+      toast.success("Payment link created");
+      setForm({ label: "", category: "school_small", amount: 3000, customer_email: "", expires_in_days: 30, notes: "" });
+      load();
+    } catch (ex) {
+      toast.error(ex?.response?.data?.detail || "Could not create link");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const copyLink = async (url, id) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Link copied to clipboard");
+    } catch {
+      toast.error("Clipboard blocked — long-press to copy");
+    }
+  };
+
+  const archive = async (link_id) => {
+    try {
+      await api.patch(`/owner/billing/payment-links/${link_id}`, { status: "archived" });
+      load();
+    } catch (ex) {
+      toast.error(ex?.response?.data?.detail || "Could not archive");
+    }
+  };
+
+  return (
+    <div className="space-y-6" data-testid="payment-links-panel">
+      {stripe && (
+        <div className={`brutal-card p-4 ${stripe.mode === "live" ? "bg-mint" : "bg-butter"}`} data-testid="pl-stripe-mode">
+          <div className="flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">Stripe</div>
+              <div className="font-display font-bold text-lg">
+                {stripe.mode === "live" ? "Live mode — real charges" : stripe.mode === "test" ? "Test mode — no real charges" : "Not connected"}
+                <span className="ml-2 text-[#4A4A4A] font-mono text-xs">…{stripe.key_tail}</span>
+              </div>
+              <p className="text-xs text-[#4A4A4A] mt-1">
+                {stripe.mode === "live"
+                  ? "Every link you create here will take a real card payment in GBP."
+                  : "Set STRIPE_API_KEY to a sk_live_… key in Emergent Secrets to switch to live payments."}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <section className="brutal-card p-6 bg-peach">
+        <div className="flex items-center gap-2 mb-4">
+          <LinkIcon size={20} weight="bold" />
+          <h2 className="font-display font-bold text-xl">Generate a custom Stripe payment link</h2>
+        </div>
+        <p className="text-sm text-[#333] mb-4">
+          Mint a bespoke checkout URL for a school or MAT that negotiated a custom price. Share it via email — the buyer pays in GBP via Stripe Checkout.
+        </p>
+        <form onSubmit={createLink} className="grid sm:grid-cols-2 gap-3">
+          <label className="block sm:col-span-2">
+            <span className="text-xs uppercase tracking-[0.2em] font-bold">Label (what this link is for)</span>
+            <input required data-testid="pl-label" value={form.label}
+              onChange={(e) => setForm({ ...form, label: e.target.value })}
+              className="mt-2 brutal-input w-full" placeholder="e.g. St Mary's High · Bespoke annual licence 2026-27" />
+          </label>
+          <label className="block">
+            <span className="text-xs uppercase tracking-[0.2em] font-bold">Category / preset</span>
+            <select data-testid="pl-category" value={form.category}
+              onChange={(e) => onCategoryChange(e.target.value)}
+              className="mt-2 brutal-input w-full">
+              {CATEGORY_PRESETS.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-xs uppercase tracking-[0.2em] font-bold">Amount (GBP £)</span>
+            <input type="number" step="0.01" min="1" required data-testid="pl-amount" value={form.amount}
+              onChange={(e) => setForm({ ...form, amount: e.target.value })}
+              className="mt-2 brutal-input w-full font-mono" placeholder="e.g. 4500" />
+          </label>
+          <label className="block">
+            <span className="text-xs uppercase tracking-[0.2em] font-bold">Customer email (optional)</span>
+            <input type="email" data-testid="pl-email" value={form.customer_email}
+              onChange={(e) => setForm({ ...form, customer_email: e.target.value })}
+              className="mt-2 brutal-input w-full" placeholder="head@stmarys.sch.uk" />
+          </label>
+          <label className="block">
+            <span className="text-xs uppercase tracking-[0.2em] font-bold">Expires in (days)</span>
+            <input type="number" min="1" max="365" data-testid="pl-expires" value={form.expires_in_days}
+              onChange={(e) => setForm({ ...form, expires_in_days: e.target.value })}
+              className="mt-2 brutal-input w-full" placeholder="30" />
+          </label>
+          <label className="block sm:col-span-2">
+            <span className="text-xs uppercase tracking-[0.2em] font-bold">Internal notes (optional)</span>
+            <input data-testid="pl-notes" value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+              className="mt-2 brutal-input w-full" placeholder="Contract ref, MAT contact, follow-up date…" />
+          </label>
+          <div className="sm:col-span-2">
+            <button type="submit" disabled={creating} data-testid="pl-create-btn"
+              className="brutal-btn bg-ink text-white inline-flex items-center gap-2 disabled:opacity-60">
+              <Plus size={16} weight="bold" /> {creating ? "Creating…" : "Create payment link"}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {lastCreated && (
+        <section className="brutal-card p-5 bg-mint" data-testid="pl-last-created">
+          <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">Link ready — copy & send</div>
+          <div className="font-display font-bold text-lg mt-1">{lastCreated.label}</div>
+          <div className="text-sm text-[#333] mt-1">
+            £{Number(lastCreated.amount).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · {lastCreated.mode} mode · Session <code className="font-mono text-xs">{lastCreated.session_id?.slice(0, 12)}…</code>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input readOnly value={lastCreated.url} className="brutal-input flex-1 min-w-[280px] font-mono text-xs" data-testid="pl-last-url" />
+            <button onClick={() => copyLink(lastCreated.url)} data-testid="pl-copy-last"
+              className="brutal-btn bg-white inline-flex items-center gap-2">
+              <Copy size={14} weight="bold" /> Copy
+            </button>
+            <a href={lastCreated.url} target="_blank" rel="noreferrer" className="brutal-btn bg-ink text-white">Open</a>
+          </div>
+        </section>
+      )}
+
+      <section>
+        <h2 className="font-display font-extrabold text-2xl tracking-tight mb-4">Payment links</h2>
+        {loading ? (
+          <div className="brutal-card p-6 text-[#4A4A4A]">Loading…</div>
+        ) : links.length === 0 ? (
+          <div className="brutal-card p-6 text-[#4A4A4A]">No links minted yet. Use the form above to create your first bespoke Stripe checkout URL.</div>
+        ) : (
+          <div className="overflow-x-auto brutal-card">
+            <table className="min-w-full text-sm">
+              <thead className="bg-butter border-b-2 border-ink">
+                <tr>
+                  <th className="text-left p-3 font-display">Created</th>
+                  <th className="text-left p-3 font-display">Label</th>
+                  <th className="text-left p-3 font-display">Category</th>
+                  <th className="text-right p-3 font-display">Amount</th>
+                  <th className="text-left p-3 font-display">Mode</th>
+                  <th className="text-left p-3 font-display">Status</th>
+                  <th className="text-left p-3 font-display">Payment</th>
+                  <th className="p-3"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {links.map((l) => (
+                  <tr key={l.link_id} className="border-t border-ink/20" data-testid={`pl-row-${l.link_id}`}>
+                    <td className="p-3 text-xs text-[#4A4A4A] whitespace-nowrap">{new Date(l.created_at).toLocaleDateString()}</td>
+                    <td className="p-3">
+                      <div className="font-bold">{l.label}</div>
+                      {l.customer_email && <div className="text-xs text-[#4A4A4A] font-mono">{l.customer_email}</div>}
+                      {l.notes && <div className="text-xs text-[#4A4A4A] mt-1">{l.notes}</div>}
+                    </td>
+                    <td className="p-3 text-xs">{l.category}</td>
+                    <td className="p-3 text-right font-mono">£{Number(l.amount).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="p-3">
+                      <span className={`px-2 py-0.5 border-2 border-ink rounded-md text-xs font-bold uppercase ${l.mode === "live" ? "bg-mint" : "bg-butter"}`}>{l.mode}</span>
+                    </td>
+                    <td className="p-3">
+                      <span className={`px-2 py-0.5 border-2 border-ink rounded-md text-xs font-bold uppercase ${l.status === "active" ? "bg-mint" : "bg-peach"}`}>{l.status || "active"}</span>
+                    </td>
+                    <td className="p-3 text-xs">
+                      {l.payment_status || "—"}
+                    </td>
+                    <td className="p-3 whitespace-nowrap">
+                      <button onClick={() => copyLink(l.url)} data-testid={`pl-copy-${l.link_id}`}
+                        className="text-xs underline mr-3 inline-flex items-center gap-1">
+                        <Copy size={12} weight="bold" /> Copy
+                      </button>
+                      {l.status !== "archived" && (
+                        <button onClick={() => archive(l.link_id)} data-testid={`pl-archive-${l.link_id}`}
+                          className="text-xs underline inline-flex items-center gap-1">
+                          <Archive size={12} weight="bold" /> Archive
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

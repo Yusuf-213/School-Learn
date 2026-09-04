@@ -2684,11 +2684,141 @@ async def owner_stripe_status(current=Depends(get_current_user)):
         "key_tail": tail,
         "webhook_configured": bool(os.environ.get("STRIPE_WEBHOOK_SECRET")),
         "instructions": (
-            "STRIPE_API_KEY is set from the Emergent Secrets tab (bottom-left of the editor). "
-            "For live mode, replace 'sk_test_emergent' with your own sk_live_... key. "
-            "Optionally set STRIPE_WEBHOOK_SECRET for signed webhook verification."
+            "Live mode is enabled automatically when STRIPE_API_KEY starts with sk_live_. "
+            "Set STRIPE_API_KEY (and optionally STRIPE_WEBHOOK_SECRET) in the Emergent Secrets tab, "
+            "then restart the backend. Learnify always uses GBP (£) for pricing."
         ),
     }
+
+
+# ====================== Owner custom Stripe payment links ======================
+# Owner-only: mint a Stripe Checkout URL for a custom price (e.g. bespoke school/MAT contract).
+# Uses the same StripeCheckout SDK — inherits live/test mode from STRIPE_API_KEY automatically.
+
+class OwnerPaymentLinkRequest(BaseModel):
+    label: str  # e.g. "St Mary's High · Bespoke annual licence"
+    amount: float  # GBP amount, must be > 0
+    currency: str = "gbp"
+    category: Optional[str] = None  # school_small / school_medium / school_large / mat_1_5 ... / custom
+    customer_email: Optional[EmailStr] = None
+    expires_in_days: Optional[int] = 30  # link auto-expires after N days (metadata-only reminder)
+    notes: Optional[str] = None
+
+
+@api_router.post("/owner/billing/payment-link")
+async def owner_create_payment_link(
+    payload: OwnerPaymentLinkRequest, http_request: Request, current=Depends(get_current_user)
+):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    if payload.amount is None or payload.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be greater than 0")
+    if payload.currency.lower() != "gbp":
+        raise HTTPException(status_code=400, detail="Learnify prices are in GBP")
+    if not payload.label.strip():
+        raise HTTPException(status_code=400, detail="Label is required")
+
+    origin = PUBLIC_APP_URL
+    success_url = f"{origin}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/pricing"
+
+    sc = _stripe(http_request)
+    md = {
+        "kind": "owner_custom_link",
+        "created_by": current["user_id"],
+        "created_by_email": current["email"],
+        "label": payload.label[:400],
+        "category": payload.category or "custom",
+    }
+    if payload.customer_email:
+        md["customer_email"] = payload.customer_email
+    if payload.notes:
+        md["notes"] = payload.notes[:400]
+
+    req = CheckoutSessionRequest(
+        amount=float(payload.amount),
+        currency="gbp",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=md,
+    )
+    session: CheckoutSessionResponse = await sc.create_checkout_session(req)
+
+    key = STRIPE_API_KEY or ""
+    mode = "live" if key.startswith("sk_live_") else "test"
+    expires_at_iso = (
+        (datetime.now(timezone.utc) + timedelta(days=payload.expires_in_days)).isoformat()
+        if payload.expires_in_days else None
+    )
+
+    doc = {
+        "link_id": f"pl_{uuid.uuid4().hex[:10]}",
+        "session_id": session.session_id,
+        "url": session.url,
+        "label": payload.label.strip(),
+        "amount": float(payload.amount),
+        "currency": "gbp",
+        "category": payload.category or "custom",
+        "customer_email": payload.customer_email,
+        "notes": payload.notes,
+        "mode": mode,
+        "created_by": current["user_id"],
+        "created_by_email": current["email"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": expires_at_iso,
+        "status": "active",
+    }
+    await db.owner_payment_links.insert_one(doc)
+
+    # Also record in payment_transactions so /billing/status/{id} works
+    await db.payment_transactions.insert_one({
+        "session_id": session.session_id,
+        "user_id": current["user_id"],
+        "email": current["email"],
+        "plan_id": payload.category or "custom",
+        "amount": float(payload.amount),
+        "currency": "gbp",
+        "period": "custom",
+        "payment_status": "initiated",
+        "status": "open",
+        "custom_link_id": doc["link_id"],
+        "custom_label": payload.label.strip(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.get("/owner/billing/payment-links")
+async def owner_list_payment_links(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    rows = await db.owner_payment_links.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # Enrich with latest payment status from payment_transactions
+    for r in rows:
+        tx = await db.payment_transactions.find_one({"session_id": r.get("session_id")}, {"_id": 0, "payment_status": 1, "status": 1})
+        if tx:
+            r["payment_status"] = tx.get("payment_status")
+            r["session_status"] = tx.get("status")
+    return {"links": rows}
+
+
+@api_router.patch("/owner/billing/payment-links/{link_id}")
+async def owner_update_payment_link(link_id: str, body: dict, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    updates = {}
+    if "status" in body and body["status"] in {"active", "archived"}:
+        updates["status"] = body["status"]
+    if "notes" in body:
+        updates["notes"] = (body["notes"] or "")[:500]
+    if not updates:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    res = await db.owner_payment_links.update_one({"link_id": link_id}, {"$set": updates})
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Link not found")
+    return {"ok": True}
 
 
 # ====================== Public app config ======================

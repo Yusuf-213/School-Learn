@@ -293,6 +293,40 @@
 - P2: Downgrade path (Pro → Standard/Basic) rather than only full cancel.
 
 
+## Iteration 24 — Individuals-only public pricing + Owner Stripe Payment-Link generator — 2026-02-04
+
+### Done
+**Public Pricing overhaul**
+- `/pricing` now shows the Individuals tab only (Free £0, Basic £5, Standard £10, Pro £15 /month). School and MAT tab buttons and grids removed — the tab bar collapses to a single locked "Individuals" pill.
+- Added `pricing-schools-contact` card below the plan grid: "Whole-school & multi-academy trust licences · contact us for pricing and a demo" with a `mailto:schoollearnsupport@pm.me` CTA (subject/body prefilled).
+- Removed the "Test mode — no real charges on the demo" disclaimer; footer now reads "Prices in GBP (£). Individual plans billed monthly · cancel anytime.".
+- `/api/plans` still returns all 13 tier ids (Free → Pro → 3 school tiers → 6 MAT tiers) so the Owner generator can reference them internally.
+
+**Owner HQ · Custom Stripe Payment-Link Generator (new tab)**
+- New endpoints (owner-only):
+  - `POST /api/owner/billing/payment-link` — mints a Stripe Checkout session with a custom GBP amount using the existing `StripeCheckout` (emergentintegrations). Payload: `label`, `category` (preset id or `custom`), `amount` (£>0), `customer_email`, `expires_in_days`, `notes`. Records into `db.owner_payment_links` + `db.payment_transactions` so `/billing/status/{session_id}` continues to work.
+  - `GET /api/owner/billing/payment-links` — lists all minted links, enriched with `payment_status` and `session_status` from `payment_transactions`.
+  - `PATCH /api/owner/billing/payment-links/{link_id}` — whitelist to `{status: active|archived}` and internal notes.
+- Live/test mode auto-detection stays inside the SDK: if `STRIPE_API_KEY` starts with `sk_live_`, sessions are live; otherwise they are Stripe test sessions. `GET /api/owner/stripe/status` mirrors this to the UI.
+- New `Payment Links` tab in `Owner.jsx` (`tab-links`) rendering `PaymentLinksPanel`: Stripe-mode banner (`pl-stripe-mode`), 6-field form (`pl-label`, `pl-category` preset with amount pre-fill, `pl-amount`, `pl-email`, `pl-expires`, `pl-notes`), Create button (`pl-create-btn`), a "Link ready — copy & send" success card with Copy + Open, and a table of every minted link with Copy + Archive actions. GBP amounts formatted with 2 decimal places.
+
+### Verified
+- Backend: iteration_17 pytest 21/21 pass (`/app/backend/tests/test_iter17_payment_links.py`). 403 on non-owner, 400 on amount≤0 / non-GBP.
+- Frontend: `/pricing` screenshot shows only Individuals + Schools contact card + no test-mode text. Owner Payment Links panel end-to-end: create → live Stripe test URL `cs_test_a1so4uOFSF…` returned → row appears in table → archive flips status to ARCHIVED.
+
+### Backlog (unchanged priority)
+- P1 verify: MFA end-to-end wiring on `MfaSetup.jsx` for staff (teacher/school_admin/owner). Add a soft nudge banner for staff without MFA.
+- P1 verify: Email Auto-sort webhook → Owner unrouted inbox.
+- P2: Refactor `server.py` (~3.9k lines) into modular routers (auth, billing, teacher, owner, legal, webhook).
+- P2: Split `Owner.jsx` (~810 lines) — extract PromoCodesPanel / PaymentLinksPanel / DpaAcceptancesPanel into their own files.
+- P2: Add DB indexes flagged by the deployment agent.
+- P2: Downgrade path (Pro → Standard/Basic).
+- P2: Deep AI curriculum-aware prompt mapping for Dreams feature.
+- P2: Mobile "Take photo" for AI Tutor.
+- P2: Lock-audit trail below the Teacher Locks table.
+- P3: Hide archived rows in the Payment Links table by default (they accumulate indefinitely).
+
+
 ## Iteration 23 — Student timetable proposals + AI confidence + MAT repricing + Support email — 2026-02-03
 
 ### Done
