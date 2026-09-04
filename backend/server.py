@@ -2821,6 +2821,47 @@ async def owner_update_payment_link(link_id: str, body: dict, current=Depends(ge
     return {"ok": True}
 
 
+@api_router.post("/owner/billing/payment-links/refresh")
+async def owner_refresh_payment_links(http_request: Request, current=Depends(get_current_user)):
+    """Poll Stripe for the latest payment_status on every non-paid owner payment link
+    (works even when the Stripe webhook isn't configured). Owner-only."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    sc = _stripe(http_request)
+    checked = 0
+    newly_paid = 0
+    errors = 0
+    cursor = db.owner_payment_links.find({"status": {"$ne": "archived"}}, {"_id": 0})
+    async for link in cursor:
+        sid = link.get("session_id")
+        if not sid:
+            continue
+        # skip if already paid according to our txn store
+        tx = await db.payment_transactions.find_one({"session_id": sid}, {"_id": 0})
+        if tx and tx.get("payment_status") == "paid":
+            continue
+        checked += 1
+        try:
+            status: CheckoutStatusResponse = await sc.get_checkout_status(sid)
+        except Exception:
+            errors += 1
+            continue
+        await db.payment_transactions.update_one(
+            {"session_id": sid},
+            {"$set": {
+                "status": status.status,
+                "payment_status": status.payment_status,
+                "amount_total": status.amount_total,
+                "currency": status.currency,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=False,
+        )
+        if status.payment_status == "paid":
+            newly_paid += 1
+    return {"checked": checked, "newly_paid": newly_paid, "errors": errors}
+
+
 # ====================== Public app config ======================
 
 @api_router.get("/config")

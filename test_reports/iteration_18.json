@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 25 (report file iteration_18) — full backend + frontend verification of MFA nudge banner, MFA setup wiring, Owner Payment Links dashboard (summary cards, filters, refresh-from-Stripe, email/copy/archive row actions) and the Owner.jsx 4-file split. 15/15 pytest backend tests passed (new file test_iter25_mfa_payments.py). All frontend flows verified end-to-end in Playwright against the preview URL. No blocking issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/owner/billing/payment-links/refresh", "issue": "Dead logic: `was_paid` is computed after already-paid sessions are skipped (`continue`), so it is always False — newly_paid is still correct, but the variable is redundant/misleading."},
+      {"endpoint": "POST /api/auth/mfa/setup", "issue": "Each call mints a brand-new secret and overwrites the pending one; a user mid-enrolment who reloads the page silently invalidates their previously scanned QR. Cosmetic/expected but worth noting."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Owner HQ → Payment Links", "issues": ["pl-monthly-totals bar chart only renders when summary.months.length > 1, so a single month of paid revenue (the common early case) shows no chart at all — could not be visually verified because there are 0 paid links in test mode.", "'This month' summary card shows hint '—' when there is no paid revenue; a 'no paid links yet' label would read better."]},
+      {"screen": "Owner HQ → Promo Codes", "issues": ["'Expires on' uses the browser-native date input rendering mm/dd/yyyy (US format) on a UK-only product; a shadcn calendar / dd/mm/yyyy would be consistent (pre-existing)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter25_mfa_payments.py",
+    "/app/test_reports/pytest/iter25_results.xml"
+  ],
+  "action_items": [
+    "Optional: render the monthly-totals chart when there is >=1 paid month (currently hidden until 2 months exist).",
+    "Optional: remove the dead `was_paid` branch in owner_refresh_payment_links."
+  ],
+  "critical_code_review_comments": [
+    "Owner.jsx is now 171 lines and cleanly delegates to /pages/owner/{BusinessPanel,PromoCodesPanel,PaymentLinksPanel,DpaAcceptancesPanel}.jsx — all four tabs verified working, no regression.",
+    "MfaNudgeBanner correctly guards on staff roles, only renders when /auth/mfa/status returns enabled=false, and writes a 24h epoch to localStorage (measured exactly 24.0h). Banner is absent on public/logged-out pages.",
+    "PaymentLinksPanel filtering/summary are pure client-side useMemo derivations from GET /owner/billing/payment-links — counts verified consistent with API (0 paid / 5 pending / 1 active / 4 archived at test time).",
+    "GET /owner/billing/payment-links responses correctly exclude MongoDB _id."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter25_mfa_payments.py"],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% of the 10 requested flows"},
+  "seed_data_creation": "Created 2 test payment links via API+UI: 'TEST_iter25 bespoke licence' (£3,000, archived by test) and 'TEST_iter25 UI created licence' (£1,234.50, mat_1_5, archived via UI archive action). Both left archived — no paid Stripe sessions created.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Owner Yusufm_1@outlook.com / The_Underdog; school_admin Tester@tester.org / 123 (from /app/memory/test_credentials.md)",
+  "context_for_next_testing_agent": "Verified this iteration: (1) mfa-nudge-banner shows for owner AND school_admin on /dashboard and /owner, absent on public /login and /pricing; mfa-nudge-cta navigates to /mfa; mfa-nudge-dismiss hides it and persists localStorage 'learnify_mfa_nudge_dismissed_until' = now+24h, survives reload; clearing the key brings the banner back. (2) /mfa → 'Set up MFA' renders QR img + mfa-secret (32-char base32); POST /api/auth/mfa/setup returns secret + otpauth:// URI and does NOT flip enabled=true. (3) pl-summary cards render with GBP 2-dp formatting; pl-filter all/active/archived/paid/unpaid filter the table correctly (archived filter showed only the 4 archived rows, active showed 0 archived). (4) pl-copy-{id} writes the checkout URL to clipboard; pl-email-{id} + pl-email-last hrefs are mailto: with cc=schoollearnsupport%40pm.me and the checkout URL in the body; pl-archive-{id} works and the row leaves the active filter. (5) pl-refresh-stripe → POST /api/owner/billing/payment-links/refresh 200 {checked:1,newly_paid:0,errors:0}, toast 'Refreshed 1 link · 0 newly paid'; non-owner 403, unauth 401/403. (6) Regressions OK: link creation returns cs_test_ checkout URL, promo tab shows HWA26, DPA tab loads + acceptances.csv returns text/csv, /billing/checkout basic plan returns checkout.stripe.com URL, /pricing shows Individuals + schools contact card and no 'Test mode' text, /owner blocked for school_admin. No console errors observed. Unverified: pl-monthly-totals chart (needs >=2 months of PAID links; none exist in test mode).",
+  "rca_of_the_issue": "No defects requiring RCA. Initial Playwright failure was a wrong selector on my side (login inputs are login-email-input / login-password-input, not name=identifier) — fixed in the test script."
+}

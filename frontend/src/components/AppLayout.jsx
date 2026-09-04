@@ -4,6 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import GlobalNav from "@/components/GlobalNav";
 import SideNav, { SideNavMobileTrigger } from "@/components/SideNav";
 import OnboardingTour from "@/components/OnboardingTour";
+import MfaNudgeBanner from "@/components/MfaNudgeBanner";
 
 function SupportBanner() {
   return (
@@ -34,6 +35,7 @@ export default function AppLayout({ children }) {
   return (
     <div className="min-h-screen bg-paper text-ink flex flex-col">
       <SupportBanner />
+      <MfaNudgeBanner />
       <div className="flex flex-1">
         <SideNav mobileOpen={mobileNav} onMobileClose={() => setMobileNav(false)} />
         <div className="flex-1 flex flex-col min-w-0">

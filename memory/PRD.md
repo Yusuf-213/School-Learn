@@ -293,6 +293,42 @@
 - P2: Downgrade path (Pro → Standard/Basic) rather than only full cancel.
 
 
+## Iteration 25 — MFA nudge banner, Payments dashboard, Email row action, Owner.jsx split — 2026-02-04
+
+### Done
+**MFA Nudge banner**
+- New `MfaNudgeBanner` component wired into `AppLayout` right below the support banner. Fetches `/auth/mfa/status` once on mount; only renders for staff (owner/school_admin/teacher) whose MFA is `enabled=false`. "Set up MFA" CTA links to `/mfa`; "Remind me later" dismisses for 24h via `localStorage["learnify_mfa_nudge_dismissed_until"]`. Hidden entirely on public/logged-out pages.
+- Verified: banner shows for the owner across every authenticated page; dismiss survives reload; existing `/mfa` setup wiring (secret + otpauth URI + QR + verify) is unchanged and works end-to-end.
+
+**Owner Payments dashboard (Payment Links tab)**
+- Four summary cards: **Paid links · Pending · Active links · This month (GBP)** — all client-side `useMemo` from `GET /api/owner/billing/payment-links`.
+- Monthly totals bar chart (top 6 months) rendered whenever ≥1 paid month exists.
+- Status filter (all / active / archived / paid / unpaid) with client-side filtering.
+- New backend endpoint `POST /api/owner/billing/payment-links/refresh` — owner-only, iterates non-archived links, polls Stripe via `_stripe().get_checkout_status()`, updates `payment_transactions`, returns `{checked, newly_paid, errors}`. Wired into a "Refresh from Stripe" button.
+- **Email row action** — every row now has Copy · Email · Archive. "Email" opens a `mailto:{customer_email}?cc=schoollearnsupport@pm.me&subject=…&body=…` with a prefilled quote template that embeds the checkout URL, amount, and label. Same "Email" button also appears on the `pl-last-created` success card.
+
+**Owner.jsx split (was 810 lines → 171)**
+- Extracted into `/app/frontend/src/pages/owner/`:
+  - `BusinessPanel.jsx` (49 lines) — Business + Stripe status.
+  - `PromoCodesPanel.jsx` (183 lines) — Promo code mint + list.
+  - `PaymentLinksPanel.jsx` (402 lines) — Full Payments dashboard.
+  - `DpaAcceptancesPanel.jsx` (152 lines) — DPA acceptances + reminders + CSV export.
+- Every previous `data-testid` preserved. Iteration 17 regression sweep passes untouched.
+
+### Verified
+- Backend: iteration_18 pytest 15/15 pass (`/app/backend/tests/test_iter25_mfa_payments.py`).
+- Frontend Playwright: 10/10 requested flows pass. MFA nudge visible for owner + school_admin, hidden on public pages, dismiss persisted 24h. Payment Links summary/filter/refresh/email actions all verified. Regression sweep on Pricing/Promo/DPA/Stripe checkout — all green.
+- Stripe integration confirmed working: `GET /api/owner/stripe/status` → `{connected:true, mode:test, key_tail:ergent}`; `POST /api/billing/checkout {plan_id:basic}` → `https://checkout.stripe.com/c/pay/cs_test_…`.
+
+### Backlog (unchanged priority)
+- P1 verify: Email Auto-sort webhook → Owner unrouted inbox.
+- P2: Refactor `server.py` (~3.9k lines) into modular routers.
+- P2: Add DB indexes flagged by the deployment agent.
+- P2: Downgrade path (Pro → Standard/Basic).
+- P2: Deep AI curriculum-aware prompt mapping for Dreams feature.
+- P3: Consider a shadcn calendar for the promo `expires_on` date input (browser-native shows mm/dd/yyyy on a UK product).
+
+
 ## Iteration 24 — Individuals-only public pricing + Owner Stripe Payment-Link generator — 2026-02-04
 
 ### Done
