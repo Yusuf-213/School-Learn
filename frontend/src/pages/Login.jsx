@@ -36,7 +36,8 @@ export default function Login() {
 
   const onGoogle = () => {
     const redirectUrl = window.location.origin + "/dashboard";
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+    const authBase = process.env.REACT_APP_AUTH_URL.replace(/\/$/, "");
+    window.location.href = `${authBase}/?redirect=${encodeURIComponent(redirectUrl)}`;
   };
 
   return (

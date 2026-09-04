@@ -31,7 +31,7 @@ db_name = os.environ['DB_NAME']
 JWT_SECRET = os.environ['JWT_SECRET']
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', '')
-PUBLIC_APP_URL = os.environ.get('PUBLIC_APP_URL', 'https://school-learn.com').rstrip('/')
+PUBLIC_APP_URL = os.environ['PUBLIC_APP_URL'].rstrip('/')
 DPA_ENCRYPTION_KEY = os.environ['DPA_ENCRYPTION_KEY']
 _fernet = Fernet(DPA_ENCRYPTION_KEY.encode() if isinstance(DPA_ENCRYPTION_KEY, str) else DPA_ENCRYPTION_KEY)
 MS_CLIENT_ID = os.environ.get('MS_CLIENT_ID', '')
@@ -58,28 +58,33 @@ PLANS = {
     "mat_80_100":    {"name": "MAT · 80–100 schools",                  "amount": 2000000.00,"currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 100},
 }
 
-# Owner accounts — global super-admins
-OWNER_EMAIL = "yusufm_1@outlook.com"
-OWNER_USERNAME = "Yusufm_1"
-OWNER_PASSWORD = "The_Underdog"
+# Owner accounts — global super-admins. All credentials loaded from env so they can be rotated
+# without a code deploy. CO_OWNERS_JSON is a JSON list of {email, username, name, password}.
+OWNER_EMAIL = os.environ['OWNER_EMAIL'].strip()
+OWNER_USERNAME = os.environ['OWNER_USERNAME'].strip()
+OWNER_PASSWORD = os.environ['OWNER_PASSWORD']
 
-# Additional co-owners (email → dict with username / password / name)
+try:
+    _co_owners_list = json.loads(os.environ.get('CO_OWNERS_JSON', '[]'))
+except Exception:
+    _co_owners_list = []
 CO_OWNERS = {
-    "khalida700@hotmail.co.uk": {
-        "username": "khalida700",
-        "name": "Khalida",
-        "password": "The_Underdog",
-    },
+    (co.get('email') or '').lower(): {
+        'username': co.get('username'),
+        'name': co.get('name'),
+        'password': co.get('password'),
+    }
+    for co in _co_owners_list if co.get('email') and co.get('password')
 }
 
-OWNER_EMAILS_LOWER = {OWNER_EMAIL.lower(), *(e.lower() for e in CO_OWNERS.keys())}
+OWNER_EMAILS_LOWER = {OWNER_EMAIL.lower(), *CO_OWNERS.keys()}
 
 # Tester demo school + account (bypass password policy — seeded server-side)
-TESTER_EMAIL = "tester@tester.org"
-TESTER_USERNAME = "Tester1"
-TESTER_PASSWORD = "123"
-TESTER_SCHOOL_ID = "school_tester_demo"
-TESTER_SCHOOL_DOMAIN = "tester.org"
+TESTER_EMAIL = os.environ['TESTER_EMAIL'].strip().lower()
+TESTER_USERNAME = os.environ['TESTER_USERNAME'].strip()
+TESTER_PASSWORD = os.environ['TESTER_PASSWORD']
+TESTER_SCHOOL_ID = os.environ['TESTER_SCHOOL_ID'].strip()
+TESTER_SCHOOL_DOMAIN = os.environ['TESTER_SCHOOL_DOMAIN'].strip().lower()
 
 client = AsyncIOMotorClient(mongo_url)
 db = client[db_name]
@@ -1097,10 +1102,12 @@ async def upsert_progress(req: ProgressUpdate, current=Depends(get_current_user)
 
 @api_router.get("/progress")
 async def list_progress(current=Depends(get_current_user)):
-    # Section 11 of the DPA: any progress record older than 30 days is wiped on read.
-    await _prune_stale_progress(current["user_id"])
+    # Section 11 of the DPA: only records within the retention window are ever returned.
+    # Actual deletion happens via /progress/reset (user-initiated) or /owner/progress/prune
+    # (admin manual). Read paths never mutate the database.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=PROGRESS_RETENTION_DAYS)).isoformat()
     items = await db.progress.find(
-        {"user_id": current["user_id"]}, {"_id": 0}
+        {"user_id": current["user_id"], "updated_at": {"$gte": cutoff}}, {"_id": 0}
     ).sort("updated_at", -1).to_list(200)
     return {"items": items, "retention_days": PROGRESS_RETENTION_DAYS}
 
@@ -3726,18 +3733,9 @@ async def startup():
             {"$set": {**tester_doc_base, "password_hash": hash_password(TESTER_PASSWORD)}},
         )
 
-    # ONE-TIME demo data wipe: keep only owners. Marker doc ensures it runs once.
-    marker = await db.meta.find_one({"key": "wipe_demo_users_v1"})
-    if not marker:
-        deleted = await db.users.delete_many({"email": {"$nin": [*OWNER_EMAILS_LOWER, TESTER_EMAIL]}})
-        await db.user_sessions.delete_many({})
-        await db.payment_transactions.delete_many({})
-        await db.generated_content.delete_many({})
-        await db.chat_messages.delete_many({})
-        await db.focus_sessions.delete_many({})
-        await db.progress.delete_many({})
-        await db.meta.insert_one({"key": "wipe_demo_users_v1", "at": datetime.now(timezone.utc).isoformat()})
-        logging.info("Wiped %d demo users", deleted.deleted_count)
+    # NOTE: Do NOT bulk-delete users on startup. Any one-time data cleanup should be a
+    # manual admin endpoint, never automatic — production databases must never be wiped by
+    # a redeploy.
 
 # Allow owner login by username "Yusufm_1" as well as email
 @api_router.post("/auth/login_username")
