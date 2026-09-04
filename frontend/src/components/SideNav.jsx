@@ -20,6 +20,17 @@ const FALLBACK_CLASSES = [
 
 function buildNav({ user, classes }) {
   const isStaff = user?.role === "school_admin" || user?.role === "teacher" || user?.role === "owner";
+  const isParent = user?.role === "parent";
+
+  // Parents get a slim, focused nav — no student learning pages.
+  if (isParent) {
+    return [
+      { to: "/dashboard", label: "Home", icon: House, testid: "sn-home", end: true },
+      { to: "/parent", label: "Parent portal", icon: Users, testid: "sn-parent" },
+      { to: "/suggestions", label: "Feedback", icon: Chat, testid: "sn-suggestions" },
+    ];
+  }
+
   const items = [
     { to: "/dashboard", label: "Home", icon: House, testid: "sn-home", end: true },
     { to: "/timetable", label: "Timetable", icon: CalendarBlank, testid: "sn-timetable" },
@@ -43,11 +54,12 @@ function buildNav({ user, classes }) {
   if (isStaff) {
     items.push({ to: "/teacher", label: "Teach", icon: ChalkboardTeacher, testid: "sn-teacher" });
     items.push({ to: "/classes", label: "Roster", icon: Users, testid: "sn-roster" });
+    items.push({ to: "/parent-requests", label: "Parent access", icon: Users, testid: "sn-parent-requests" });
   }
   if (user?.role === "student") {
     items.push({ to: "/my-record", label: "My record", icon: Trophy, testid: "sn-myrecord" });
   }
-  if (user?.role === "parent" || user?.role === "owner") {
+  if (user?.role === "owner") {
     items.push({ to: "/parent", label: "Parent portal", icon: Users, testid: "sn-parent" });
   }
   // Dreams for everyone — including owner — per user request

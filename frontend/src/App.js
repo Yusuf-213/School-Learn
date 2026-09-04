@@ -27,7 +27,6 @@ import Suggestions from "@/pages/Suggestions";
 import Safety from "@/pages/Safety";
 import Contact from "@/pages/Contact";
 import DPA from "@/pages/DPA";
-import MfaSetup from "@/pages/MfaSetup";
 import Payouts from "@/pages/Payouts";
 import Timetable from "@/pages/Timetable";
 import Assessments from "@/pages/Assessments";
@@ -39,6 +38,7 @@ import ClassesRoster from "@/pages/ClassesRoster";
 import VerifyDomain from "@/pages/VerifyDomain";
 import Legal from "@/pages/Legal";
 import Parent from "@/pages/Parent";
+import ParentRequests from "@/pages/ParentRequests";
 
 function AppRouter() {
   const location = useLocation();
@@ -68,7 +68,6 @@ function AppRouter() {
       <Route path="/contact" element={<Contact />} />
       <Route path="/dpa" element={<DPA />} />
       <Route path="/privacy" element={<DPA />} />
-      <Route path="/mfa" element={<ProtectedRoute><MfaSetup /></ProtectedRoute>} />
       <Route path="/owner/payouts" element={<ProtectedRoute><Payouts /></ProtectedRoute>} />
       <Route path="/timetable" element={<ProtectedRoute><Timetable /></ProtectedRoute>} />
       <Route path="/homework" element={<ProtectedRoute><Homework /></ProtectedRoute>} />
@@ -80,6 +79,7 @@ function AppRouter() {
       <Route path="/verify-domain" element={<VerifyDomain />} />
       <Route path="/legal" element={<Legal />} />
       <Route path="/parent" element={<ProtectedRoute><Parent /></ProtectedRoute>} />
+      <Route path="/parent-requests" element={<ProtectedRoute><ParentRequests /></ProtectedRoute>} />
       <Route path="*" element={<Landing />} />
     </Routes>
   );

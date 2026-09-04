@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import GlobalNav from "@/components/GlobalNav";
 import SideNav, { SideNavMobileTrigger } from "@/components/SideNav";
 import OnboardingTour from "@/components/OnboardingTour";
-import MfaNudgeBanner from "@/components/MfaNudgeBanner";
+import ParentConsentModal from "@/components/ParentConsentModal";
 
 function SupportBanner() {
   return (
@@ -35,7 +35,6 @@ export default function AppLayout({ children }) {
   return (
     <div className="min-h-screen bg-paper text-ink flex flex-col">
       <SupportBanner />
-      <MfaNudgeBanner />
       <div className="flex flex-1">
         <SideNav mobileOpen={mobileNav} onMobileClose={() => setMobileNav(false)} />
         <div className="flex-1 flex flex-col min-w-0">
@@ -50,6 +49,7 @@ export default function AppLayout({ children }) {
         </div>
       </div>
       <OnboardingTour />
+      <ParentConsentModal />
     </div>
   );
 }
@@ -62,7 +62,6 @@ function Footer() {
         <Link to="/dpa" className="underline hover:text-ink" data-testid="footer-dpa">Privacy & DPA</Link>
         <Link to="/legal" className="underline hover:text-ink" data-testid="footer-legal">Legal archive</Link>
         <Link to="/contact" className="underline hover:text-ink" data-testid="footer-contact">Contact</Link>
-        <Link to="/mfa" className="underline hover:text-ink" data-testid="footer-mfa">Two-factor auth</Link>
       </div>
       <div className="mt-2">© {new Date().getFullYear()} Learnify · Built safe for UK schools.</div>
     </footer>

@@ -1,20 +1,29 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import GlobalNav from "@/components/GlobalNav";
 import GradeLevelSelect from "@/components/GradeLevelSelect";
-import { GoogleLogo, Warning, ArrowRight, ArrowLeft } from "@phosphor-icons/react";
+import { GoogleLogo, Warning, ArrowRight, ArrowLeft, Student, Users } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
-// 3-step signup: 1) email, 2) first name, 3) password + grade level
 export default function Register() {
   const { registerWithEmail } = useAuth();
   const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const isParent = params.get("role") === "parent";
   const [step, setStep] = useState(1);
   const [form, setForm] = useState({ email: "", name: "", password: "", grade_level: "uk_y10" });
   const [acceptPolicy, setAcceptPolicy] = useState(false);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const setRoleParent = (parent) => {
+    const next = new URLSearchParams(params);
+    if (parent) next.set("role", "parent"); else next.delete("role");
+    setParams(next, { replace: true });
+    setStep(1);
+    setErr("");
+  };
 
   const next = (e) => {
     e?.preventDefault();
@@ -38,9 +47,9 @@ export default function Register() {
     if (!acceptPolicy) { setErr("You must accept the Privacy Policy & DPA to create an account."); return; }
     setLoading(true);
     try {
-      await registerWithEmail(form);
-      toast.success("Account created!");
-      navigate("/dashboard", { replace: true });
+      await registerWithEmail({ ...form, role: isParent ? "parent" : undefined });
+      toast.success(isParent ? "Parent account created — link your child next." : "Account created!");
+      navigate(isParent ? "/parent" : "/dashboard", { replace: true });
     } catch (ex) {
       setErr(ex.response?.data?.detail || "Registration failed");
     } finally {
@@ -49,7 +58,7 @@ export default function Register() {
   };
 
   const onGoogle = () => {
-    const redirectUrl = window.location.origin + "/dashboard";
+    const redirectUrl = window.location.origin + (isParent ? "/parent" : "/dashboard");
     window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
   };
 
@@ -59,6 +68,19 @@ export default function Register() {
       <div className="flex items-center justify-center p-6 py-10">
         <div className="w-full max-w-md">
           <div className="brutal-card p-8">
+            <div className="grid grid-cols-2 gap-2 mb-6" data-testid="register-role-toggle">
+              <button type="button" onClick={() => setRoleParent(false)}
+                data-testid="register-role-student"
+                className={`brutal-btn inline-flex items-center justify-center gap-2 text-sm ${!isParent ? "bg-ink text-white" : "bg-white"}`}>
+                <Student size={16} weight="bold" /> I'm a student
+              </button>
+              <button type="button" onClick={() => setRoleParent(true)}
+                data-testid="register-role-parent"
+                className={`brutal-btn inline-flex items-center justify-center gap-2 text-sm ${isParent ? "bg-ink text-white" : "bg-white"}`}>
+                <Users size={16} weight="bold" /> I'm a parent
+              </button>
+            </div>
+
             <div className="flex items-center gap-2 mb-3">
               {[1, 2, 3].map((s) => (
                 <div key={s} className={`h-2 flex-1 rounded-full border-2 border-ink ${step >= s ? "bg-ink" : "bg-white"}`} />
@@ -69,7 +91,9 @@ export default function Register() {
               {step === 1 ? "Enter your email" : step === 2 ? "What's your first name?" : "Create a password"}
             </h1>
             <p className="text-[#4A4A4A] mb-6 text-sm">
-              {step === 1 && "We'll use this to send you study reminders. Use a school email if you have one."}
+              {step === 1 && (isParent
+                ? "We'll use this to send you your child's homework updates. Parents don't pay for Learnify."
+                : "We'll use this to send you study reminders. Use a school email if you have one.")}
               {step === 2 && "We'll greet you with this on every page."}
               {step === 3 && "Pick a strong password — at least 10 characters with upper, lower, a number and a symbol."}
             </p>
@@ -88,7 +112,7 @@ export default function Register() {
                     data-testid="register-email-input"
                     type="email" required autoFocus value={form.email}
                     onChange={(e) => setForm({ ...form, email: e.target.value })}
-                    className="mt-2 brutal-input w-full" placeholder="you@school.edu" />
+                    className="mt-2 brutal-input w-full" placeholder={isParent ? "you@example.com" : "you@school.edu"} />
                 </label>
                 <button type="submit" data-testid="register-next-btn"
                   className="brutal-btn bg-ink text-white w-full inline-flex items-center justify-center gap-2">
@@ -127,15 +151,17 @@ export default function Register() {
                     onChange={(e) => setForm({ ...form, password: e.target.value })}
                     className="mt-2 brutal-input w-full" placeholder="10+ chars · Aa1!" />
                 </label>
-                <label className="block">
-                  <span className="text-xs uppercase tracking-[0.2em] font-bold">Grade / year level</span>
-                  <GradeLevelSelect
-                    testId="register-grade-select"
-                    value={form.grade_level}
-                    onChange={(v) => setForm({ ...form, grade_level: v })}
-                    className="mt-2 w-full"
-                  />
-                </label>
+                {!isParent && (
+                  <label className="block">
+                    <span className="text-xs uppercase tracking-[0.2em] font-bold">Grade / year level</span>
+                    <GradeLevelSelect
+                      testId="register-grade-select"
+                      value={form.grade_level}
+                      onChange={(v) => setForm({ ...form, grade_level: v })}
+                      className="mt-2 w-full"
+                    />
+                  </label>
+                )}
                 <label className="flex items-start gap-2 text-xs" data-testid="register-accept-policy-row">
                   <input
                     type="checkbox"
@@ -154,7 +180,7 @@ export default function Register() {
                   <button type="button" onClick={() => setStep(2)} className="brutal-btn bg-white inline-flex items-center gap-2"><ArrowLeft size={16} /> Back</button>
                   <button type="submit" disabled={loading} data-testid="register-submit-btn"
                     className="brutal-btn bg-ink text-white flex-1 disabled:opacity-60">
-                    {loading ? "Creating…" : "Create account"}
+                    {loading ? "Creating…" : isParent ? "Create parent account" : "Create account"}
                   </button>
                 </div>
               </form>

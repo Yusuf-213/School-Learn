@@ -293,6 +293,59 @@
 - P2: Downgrade path (Pro → Standard/Basic) rather than only full cancel.
 
 
+## Iteration 26 (patch) — Parent nav trim, rejected-request split, consent role-guard — 2026-02-04
+
+Follow-ups from testing_agent iter19 report:
+- **Parent sidebar trimmed** — parents no longer see the full student nav (Timetable, Classes, Homework, Assessments, Practice, Progress, Reports, AI Tutor Support, Dreams, Plans). Their sidebar is now just Home + Parent portal + Feedback. Owner keeps the Parent portal link.
+- **Parent.jsx** — Declined requests moved to a dedicated "Declined requests" section (`data-testid=parent-rejected-list`) with the rejection reason; the "Pending requests" heading only lists actually pending rows.
+- **`/api/student/parent-consent-requests`** — added an explicit role guard: only students / individuals / owner can hit it (defence in depth per code-review note; parents / teachers / school_admins now receive an empty list).
+
+## Iteration 26 — Remove MFA, Parent portal with consent workflow, real usernames — 2026-02-04
+
+### Done
+**MFA removed (per product decision)**
+- Deleted `/app/frontend/src/pages/MfaSetup.jsx` and `/app/frontend/src/components/MfaNudgeBanner.jsx`.
+- Removed `/mfa` route from `App.js`, `MfaNudgeBanner` render from `AppLayout`, and the "Two-factor auth" footer link.
+- Removed 5 backend endpoints (`/auth/mfa/setup`, `/verify_enroll`, `/disable`, `/status`, `/login_with_mfa`) and the 3 associated Pydantic models. `pyotp` import kept but unused (safe no-op).
+- Login flow no longer touches MFA; historical `mfa_enabled`/`mfa_secret` fields on old user docs are ignored.
+
+**Parent portal — guardian consent workflow**
+- Free parent account signup: `Register.jsx` now has an "I'm a student / I'm a parent" toggle (`register-role-student` / `register-role-parent`). Parent-mode hides the grade level, calls `POST /api/auth/register` with `role: "parent"`, redirects to `/parent`. `RegisterRequest` model accepts `role`, back-end normalises to `ROLE_PARENT` and stores `subscription_tier: "free"` with no grade level. No billing prompted.
+- Consent state machine on `parent_links` collection: `pending_school` → SLT approves/rejects for school-enrolled children; `pending_child_consent` → child approves/rejects for individual students; `approved` → parent unlocked; `rejected` → parent blocked.
+- New endpoints:
+  - `POST /api/parent/link-requests` — parent creates a request by child email + relationship. Auto-routes to school SLT or child consent depending on `child.school_id`.
+  - `GET /api/parent/link-requests` — parent's own pending/approved/rejected history.
+  - `GET /api/parent/children` — now returns **only approved** links (legacy rows without `status` are treated as approved for backwards compatibility).
+  - `GET /api/parent/children/{child_user_id}/summary` — returns 403 unless status is approved.
+  - `GET /api/school/parent-requests` — SLT (school_admin/owner) sees pending requests for their school.
+  - `POST /api/school/parent-requests/{link_id}/decide` — SLT approves or rejects.
+  - `GET /api/student/parent-consent-requests` — the individual student sees their own pending requests.
+  - `POST /api/student/parent-consent-requests/{link_id}/decide` — student approves or rejects; enforces that only the child can consent for their own link (owner-bypass removed).
+- Legacy `POST /api/parent/children` kept as a thin wrapper to the new request endpoint (breaking change: it no longer instantly links).
+- New UI:
+  - **`ParentConsentModal.jsx`** — full-screen modal shown on every authenticated page for `student`/`individual` roles whose `/student/parent-consent-requests` list is non-empty. Two buttons: "No, block this" / "Yes, they're my guardian". Explicit warning about only tapping Yes for legal guardians.
+  - **`ParentRequests.jsx`** — SLT review page at `/parent-requests`. Sidebar link "Parent access" added for staff roles. Each row shows parent name/email/relationship + child name/email, an optional rejection reason field, and Approve/Reject buttons.
+  - **`Parent.jsx`** rewritten: parent link form now takes a relationship dropdown (Mother/Father/Guardian/Other), a pending-requests list with status badges (school approval / child consent / rejected), and the approved children pane below.
+
+**Real usernames restored**
+- `lib/displayName.js` rewritten: `displayHandle(user)` now returns the user's real first name (or username / email-local-part as fallbacks). `displayInitial` returns the real initial. Removes the "Bright Otter" pseudonym generator that all schools disliked. Dashboard greeting, SideNav avatar+label, and OnboardingTour welcome all now read the actual name.
+
+### Verified (main-agent smoke test)
+- `GET /api/auth/mfa/status` → 404 (endpoint gone).
+- Parent registration → `{role: "parent", grade_level: null}`.
+- Student registration → `{role: "individual", grade_level: "uk_y10"}`.
+- Full happy path: parent requests → status `pending_child_consent` → student consents → status `approved` → parent's `/parent/children` list shows the child → parent's summary endpoint returns homework/detentions.
+- Wrong user attempting `/student/parent-consent-requests/{id}/decide` on someone else's link → 403.
+- Register `?role=parent` UI toggle active, grade selector hidden.
+
+### Backlog (unchanged priority)
+- P1: Email notifications to SLT when a new parent request arrives (currently pull-only).
+- P2: Refactor `server.py` (~3.9k lines) into modular routers.
+- P2: Add DB indexes flagged by the deployment agent.
+- P2: Downgrade path (Pro → Standard/Basic).
+- P2: Duplicate-link shortcut on Payment Links table.
+
+
 ## Iteration 25 — MFA nudge banner, Payments dashboard, Email row action, Owner.jsx split — 2026-02-04
 
 ### Done

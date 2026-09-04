@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 26 full-stack verification (MFA removal + parent consent portal + real names). Backend: new pytest suite /app/backend/tests/test_iter26_parent_portal.py — 29/29 passed (MFA endpoints 404, parent registration, link-request state machine incl. dedupe + re-request after rejection, student self-consent + 403 for wrong user, SLT list scoping/approve/reject/400/404, parent visibility gating, legacy status-less rows treated as approved, regression health/billing-cancel/auth-me). Frontend: /mfa falls through to Landing with no MFA UI, no 2FA text anywhere on landing/footer, register?role=parent toggle active + grade select hidden (shown for student), owner dashboard greets real name 'Hello, Yusufm_1.' with no pseudonym and no MFA banner, school_admin sidebar 'Parent access' → /parent-requests renders seeded pending_school request and Approve removes it, individual student sees ParentConsentModal with the requesting email and both No (rejects, does not reappear) and Yes (approves) work, parent portal lists only approved children and loads the read-only homework/detentions summary, and the consent modal never renders for parent or owner roles. Deleted obsolete /app/backend/tests/test_iter25_mfa_payments.py. All test users cleaned up (DB verified 0 remaining).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/homework/mine", "issue": "Endpoint does not exist (404) but is called by /homework page for every role — pre-existing from earlier iterations, not iter26 scope. Frontend swallows the error and renders hardcoded DEMO_TASKS. Should call /api/student/homework."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Parent.jsx pending list", "issue": "A rejected request is rendered under the 'Pending requests' heading with a DECLINED badge — mislabelled section (heading should be 'Requests' or declined rows grouped separately)", "selector": "text=Pending requests", "priority": "LOW"},
+      {"component": "Register.jsx step 3", "issue": "Password input renders with the red/invalid border (focus/error styling) before the user types anything — looks like a validation error on a pristine field", "selector": "[data-testid=register-password-input]", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Parent navigation", "issue": "role=parent gets the full student sidebar (Timetable, Classes, Homework, Assessments, Practice, Progress, Reports, AI Tutor Support, Dreams, Plans). /homework as a parent renders demo student homework and fires 4x 404 /api/homework/mine console errors. Parent nav should be trimmed to Parent portal + account pages.", "affected_selectors": ["nav", "/homework"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter26_parent_portal.py",
+    "/app/backend/tests/seed_iter26_ui.py",
+    "/app/backend/tests/seed_iter26_school_request.py",
+    "/app/test_reports/pytest/iter26_results.xml"
+  ],
+  "action_items": [
+    "Trim the sidebar for role=parent so parents don't see student learning pages (and stop the 404 /api/homework/mine calls)",
+    "Homework.jsx should call /api/student/homework instead of the non-existent /api/homework/mine (pre-existing)",
+    "Parent.jsx: don't list DECLINED rows under the 'Pending requests' heading",
+    "Register step 3: remove the invalid/red border on the pristine password field"
+  ],
+  "critical_code_review_comments": [
+    "GET /api/student/parent-consent-requests has no role check — a parent/teacher/school_admin can call it. Harmless today (query is scoped to child_user_id == current user), but add an explicit role guard for defence in depth.",
+    "POST /school/parent-requests/{link_id}/decide lets an owner approve requests for any school without school scoping — intentional per spec, but log/audit it since it bypasses SLT ownership.",
+    "Backwards-compat clause {'status': {'$exists': False}} in /parent/children plus the 'if link.get(\"status\") and ...' check in the summary endpoint means a row with status='' or null would be treated as approved — consider normalising legacy rows in a migration instead.",
+    "server.py is ~4023 lines; split parent portal / billing / school modules into routers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter26_parent_portal.py (new)",
+    "/app/backend/tests/seed_iter26_ui.py (new)",
+    "/app/backend/tests/seed_iter26_school_request.py (new)",
+    "/app/backend/tests/test_iter25_mfa_payments.py (deleted — asserted removed MFA endpoints)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Temporary users iter26_parent@example.com (parent), iter26_child@example.com (individual), iter26_schoolkid@tester.org (student @ school_tester_demo, created via /api/owner/test-accounts) plus per-run pytest users — all deleted from mongo (users + parent_links) at end of run; verified 0 remaining.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Owner Yusufm_1@outlook.com / The_Underdog; school_admin Tester@tester.org / 123 (has school_id=school_tester_demo, SLT path fully testable)",
+  "context_for_next_testing_agent": "Run `python /app/backend/tests/seed_iter26_ui.py seed` to recreate a parent + individual child with a pending consent request for UI work, and `seed_iter26_school_request.py` for a pending_school request visible at /parent-requests as Tester@tester.org; clean with `seed_iter26_ui.py clean`. test_iter25_mfa_payments.py was deleted. Remaining open items are all cosmetic/nav-scope (parent sees student nav; /api/homework/mine 404) — no functional iter26 defects found.",
+  "rca_of_the_issue": "The 404s observed in the browser console come from Homework.jsx calling /api/homework/mine, an endpoint that was never implemented (real endpoints are /api/student/homework and /api/teacher/homework); the page silently falls back to DEMO_TASKS so users see fabricated homework. Unrelated to iteration 26 changes."
+}

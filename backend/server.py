@@ -10,7 +10,7 @@ import bcrypt
 import jwt
 import httpx
 import re
-import pyotp
+import pyotp  # legacy; kept for compat but no active endpoint uses it now
 import hashlib
 from cryptography.fernet import Fernet, InvalidToken
 from pathlib import Path
@@ -117,6 +117,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     grade_level: Optional[str] = "uk_y10"
+    role: Optional[Literal["individual", "parent"]] = "individual"
 
 class LoginRequest(BaseModel):
     email: EmailStr
@@ -355,16 +356,19 @@ async def register(req: RegisterRequest):
     if pw_err:
         raise HTTPException(status_code=400, detail=pw_err)
     user_id = f"user_{uuid.uuid4().hex[:12]}"
+    role = ROLE_PARENT if req.role == "parent" else ROLE_INDIVIDUAL
     doc = {
         "user_id": user_id,
         "name": req.name,
         "email": req.email.lower(),
         "password_hash": hash_password(req.password),
-        "grade_level": normalize_grade_level(req.grade_level),
+        "grade_level": None if role == ROLE_PARENT else normalize_grade_level(req.grade_level),
         "picture": None,
         "provider": "email",
-        "role": ROLE_INDIVIDUAL,
+        "role": role,
         "school_id": None,
+        # Parents always get free access — no billing required per product decision.
+        "subscription_tier": "free",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
@@ -378,7 +382,7 @@ async def register(req: RegisterRequest):
             "picture": None,
             "grade_level": doc["grade_level"],
             "provider": "email",
-            "role": ROLE_INDIVIDUAL,
+            "role": role,
             "school_id": None,
         },
     }
@@ -2543,42 +2547,101 @@ async def business_pricing(current=Depends(get_current_user)):
     return BUSINESS_PRICING
 
 
-# ====================== Parent portal (children linking) ======================
+# ====================== Parent portal (guardian consent workflow) ======================
+# Product rules (2026-02-04):
+#   • A parent creates a free account (role=parent) and requests to link a child by email.
+#   • If the child belongs to a school → the request goes to that school's SLT
+#     (school_admin/owner). The parent gets read-only access to the child's academic
+#     record once SLT approves.
+#   • If the child is an individual (no school_id) → the request goes to the child
+#     directly. The child sees a consent modal on their next page load:
+#     "This email is requesting to view your account — are they your legal guardian?".
+#     Only the child themselves (or the owner) can approve.
+#   • Approved links show up in the parent portal. Rejected/pending links do not
+#     expose any academic data.
+
+VALID_PARENT_STATUSES = {"pending_school", "pending_child_consent", "approved", "rejected"}
+
 
 class ParentLinkChild(BaseModel):
     child_email: EmailStr
+    relationship: Optional[str] = None  # "mother"/"father"/"guardian"/"other"
 
 
-@api_router.post("/parent/children")
-async def link_child(req: ParentLinkChild, current=Depends(get_current_user)):
+class ParentDecisionRequest(BaseModel):
+    approved: bool
+    note: Optional[str] = None
+
+
+def _link_public(link: dict) -> dict:
+    return {k: v for k, v in link.items() if k not in {"_id"}}
+
+
+@api_router.post("/parent/link-requests")
+async def parent_create_link_request(req: ParentLinkChild, current=Depends(get_current_user)):
     if current.get("role") != ROLE_PARENT and not is_owner(current):
         raise HTTPException(status_code=403, detail="Parent only")
-    child_email = req.child_email.lower()
+    child_email = req.child_email.lower().strip()
+    if child_email == current["email"].lower():
+        raise HTTPException(status_code=400, detail="You can't link to your own email")
     child = await db.users.find_one({"email": child_email})
     if not child:
-        raise HTTPException(status_code=404, detail="No student with that email — ask the school to create the account first")
-    if child.get("role") != ROLE_STUDENT:
-        raise HTTPException(status_code=400, detail="Linked account must be a student")
+        raise HTTPException(status_code=404, detail="No student found with that email — ask the child to sign up first.")
+    if child.get("role") not in {ROLE_STUDENT, ROLE_INDIVIDUAL}:
+        raise HTTPException(status_code=400, detail="Only student or individual accounts can be linked.")
+    existing = await db.parent_links.find_one({
+        "parent_user_id": current["user_id"], "child_user_id": child["user_id"]
+    })
+    if existing and existing.get("status") in {"pending_school", "pending_child_consent", "approved"}:
+        return {"link": _link_public(existing), "already_requested": True}
+    child_school_id = child.get("school_id")
+    status = "pending_school" if child_school_id else "pending_child_consent"
+    link_id = existing.get("link_id") if existing else f"pl_{uuid.uuid4().hex[:10]}"
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "link_id": link_id,
+        "parent_user_id": current["user_id"],
+        "parent_email": current["email"],
+        "parent_name": current.get("name"),
+        "child_user_id": child["user_id"],
+        "child_email": child_email,
+        "child_name": child.get("name"),
+        "child_school_id": child_school_id,
+        "relationship": (req.relationship or "").strip() or None,
+        "status": status,
+        "requested_at": now,
+        "updated_at": now,
+    }
     await db.parent_links.update_one(
         {"parent_user_id": current["user_id"], "child_user_id": child["user_id"]},
-        {"$set": {
-            "parent_user_id": current["user_id"],
-            "child_user_id": child["user_id"],
-            "child_email": child_email,
-            "child_name": child.get("name"),
-            "linked_at": datetime.now(timezone.utc).isoformat(),
-        }},
+        {"$set": doc, "$unset": {"decided_at": "", "decided_by": "", "decided_by_role": "", "rejection_reason": ""}},
         upsert=True,
     )
-    return {"linked": True, "child_user_id": child["user_id"], "child_email": child_email, "child_name": child.get("name")}
+    return {"link": doc, "already_requested": False}
+
+
+@api_router.get("/parent/link-requests")
+async def parent_list_link_requests(current=Depends(get_current_user)):
+    if current.get("role") != ROLE_PARENT and not is_owner(current):
+        raise HTTPException(status_code=403, detail="Parent only")
+    rows = await db.parent_links.find({"parent_user_id": current["user_id"]}, {"_id": 0}).sort("requested_at", -1).to_list(200)
+    return {"requests": rows}
+
+
+@api_router.post("/parent/children")  # legacy compat — now creates a request instead of instant link
+async def link_child(req: ParentLinkChild, current=Depends(get_current_user)):
+    return await parent_create_link_request(req, current)
 
 
 @api_router.get("/parent/children")
 async def list_children(current=Depends(get_current_user)):
     if current.get("role") != ROLE_PARENT and not is_owner(current):
         raise HTTPException(status_code=403, detail="Parent only")
-    links = await db.parent_links.find({"parent_user_id": current["user_id"]}, {"_id": 0}).to_list(50)
-    # Attach headline stats per child (homework count + detentions + attendance summary)
+    # Backwards compat: rows written before 2026-02-04 have no status → treat as approved.
+    links = await db.parent_links.find(
+        {"parent_user_id": current["user_id"], "$or": [{"status": "approved"}, {"status": {"$exists": False}}]},
+        {"_id": 0},
+    ).to_list(50)
     for l in links:
         cid = l["child_user_id"]
         l["homework"] = await db.homework.count_documents({"assigned_to": cid})
@@ -2600,16 +2663,105 @@ async def unlink_child(req: ParentLinkChild, current=Depends(get_current_user)):
 
 @api_router.get("/parent/children/{child_user_id}/summary")
 async def parent_child_summary(child_user_id: str, current=Depends(get_current_user)):
-    """Homework + detentions for a linked child. Parents only see linked kids."""
+    """Homework + detentions for an APPROVED linked child. Parents only see linked+approved kids."""
     if not is_owner(current):
         if current.get("role") != ROLE_PARENT:
             raise HTTPException(status_code=403, detail="Parent only")
-        link = await db.parent_links.find_one({"parent_user_id": current["user_id"], "child_user_id": child_user_id})
+        link = await db.parent_links.find_one({
+            "parent_user_id": current["user_id"],
+            "child_user_id": child_user_id,
+        })
         if not link:
             raise HTTPException(status_code=403, detail="Not linked to this child")
+        if link.get("status") and link["status"] != "approved":
+            raise HTTPException(status_code=403, detail="Consent still pending — the school or student hasn't approved this link yet.")
     homework = await db.homework.find({"assigned_to": child_user_id}, {"_id": 0}).sort("due_at", -1).to_list(50)
     detentions = await db.detentions.find({"student_user_id": child_user_id}, {"_id": 0}).sort("issued_at", -1).to_list(50)
     return {"homework": homework, "detentions": detentions}
+
+
+# --- SLT approval endpoints (school_admin / owner) ---
+
+@api_router.get("/school/parent-requests")
+async def school_parent_requests(current=Depends(get_current_user)):
+    """SLT (school_admin) sees all pending parent link requests where the CHILD is in their school."""
+    if current.get("role") not in {ROLE_SCHOOL_ADMIN, ROLE_OWNER}:
+        raise HTTPException(status_code=403, detail="School admin only")
+    q = {"status": "pending_school"}
+    if not is_owner(current):
+        sid = current.get("school_id")
+        if not sid:
+            raise HTTPException(status_code=400, detail="No school context on this account")
+        q["child_school_id"] = sid
+    rows = await db.parent_links.find(q, {"_id": 0}).sort("requested_at", -1).to_list(200)
+    return {"requests": rows}
+
+
+@api_router.post("/school/parent-requests/{link_id}/decide")
+async def school_decide_parent_request(link_id: str, req: ParentDecisionRequest, current=Depends(get_current_user)):
+    if current.get("role") not in {ROLE_SCHOOL_ADMIN, ROLE_OWNER}:
+        raise HTTPException(status_code=403, detail="School admin only")
+    link = await db.parent_links.find_one({"link_id": link_id})
+    if not link:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if link.get("status") != "pending_school":
+        raise HTTPException(status_code=400, detail=f"Request is already {link.get('status')}")
+    if not is_owner(current):
+        if link.get("child_school_id") != current.get("school_id"):
+            raise HTTPException(status_code=403, detail="Not your school")
+    new_status = "approved" if req.approved else "rejected"
+    now = datetime.now(timezone.utc).isoformat()
+    updates = {
+        "status": new_status,
+        "decided_at": now,
+        "decided_by": current["user_id"],
+        "decided_by_role": current.get("role"),
+        "decided_by_email": current["email"],
+        "updated_at": now,
+    }
+    if not req.approved and req.note:
+        updates["rejection_reason"] = req.note[:500]
+    await db.parent_links.update_one({"link_id": link_id}, {"$set": updates})
+    return {"ok": True, "status": new_status}
+
+
+# --- Student consent endpoints (individual accounts only) ---
+
+@api_router.get("/student/parent-consent-requests")
+async def student_parent_consent_requests(current=Depends(get_current_user)):
+    """Individual students see pending link requests waiting on their consent."""
+    if current.get("role") not in {ROLE_STUDENT, ROLE_INDIVIDUAL, ROLE_OWNER}:
+        return {"requests": []}
+    rows = await db.parent_links.find(
+        {"child_user_id": current["user_id"], "status": "pending_child_consent"},
+        {"_id": 0},
+    ).sort("requested_at", -1).to_list(50)
+    return {"requests": rows}
+
+
+@api_router.post("/student/parent-consent-requests/{link_id}/decide")
+async def student_decide_parent_request(link_id: str, req: ParentDecisionRequest, current=Depends(get_current_user)):
+    link = await db.parent_links.find_one({"link_id": link_id})
+    if not link:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if link.get("child_user_id") != current["user_id"]:
+        raise HTTPException(status_code=403, detail="Not your consent to give")
+    if link.get("status") != "pending_child_consent":
+        raise HTTPException(status_code=400, detail=f"Request is already {link.get('status')}")
+    new_status = "approved" if req.approved else "rejected"
+    now = datetime.now(timezone.utc).isoformat()
+    updates = {
+        "status": new_status,
+        "decided_at": now,
+        "decided_by": current["user_id"],
+        "decided_by_role": "student_self_consent",
+        "decided_by_email": current["email"],
+        "updated_at": now,
+    }
+    if not req.approved and req.note:
+        updates["rejection_reason"] = req.note[:500]
+    await db.parent_links.update_one({"link_id": link_id}, {"$set": updates})
+    return {"ok": True, "status": new_status}
 
 
 # ====================== Email auto-sort (inbound webhook, e.g. Resend / Mailgun) ======================
@@ -3026,96 +3178,9 @@ async def submit_suggestion(req: SuggestionSubmit, current=Depends(get_current_u
     doc.pop("_id", None)
     return doc
 
-# ====================== Safety: MFA (TOTP) + content log + statutory pages ======================
-
-class MfaSetupResponse(BaseModel):
-    secret: str
-    provisioning_uri: str
-
-class MfaVerifyRequest(BaseModel):
-    code: str
-
-class LoginWithMfaRequest(BaseModel):
-    identifier: str
-    password: str
-    code: Optional[str] = None
-
-@api_router.post("/auth/mfa/setup")
-async def mfa_setup(current=Depends(get_current_user)):
-    """Begin MFA enrolment. Returns a TOTP secret + otpauth:// URI. Staff only (owner, school_admin, teacher)."""
-    if current.get("role") not in {ROLE_OWNER, ROLE_SCHOOL_ADMIN, ROLE_TEACHER}:
-        raise HTTPException(status_code=403, detail="MFA is for staff accounts.")
-    secret = pyotp.random_base32()
-    issuer = "Learnify"
-    label = current["email"]
-    uri = pyotp.TOTP(secret).provisioning_uri(name=label, issuer_name=issuer)
-    await db.users.update_one(
-        {"user_id": current["user_id"]},
-        {"$set": {"mfa_secret_pending": secret, "mfa_setup_started_at": datetime.now(timezone.utc).isoformat()}},
-    )
-    return {"secret": secret, "provisioning_uri": uri}
-
-@api_router.post("/auth/mfa/verify_enroll")
-async def mfa_verify_enroll(req: MfaVerifyRequest, current=Depends(get_current_user)):
-    user = await db.users.find_one({"user_id": current["user_id"]})
-    secret = user.get("mfa_secret_pending")
-    if not secret:
-        raise HTTPException(status_code=400, detail="No MFA setup in progress")
-    totp = pyotp.TOTP(secret)
-    if not totp.verify(req.code, valid_window=1):
-        raise HTTPException(status_code=400, detail="Code didn't match — try again.")
-    await db.users.update_one(
-        {"user_id": current["user_id"]},
-        {"$set": {"mfa_secret": secret, "mfa_enabled": True}, "$unset": {"mfa_secret_pending": ""}},
-    )
-    return {"enabled": True}
-
-@api_router.post("/auth/mfa/disable")
-async def mfa_disable(req: MfaVerifyRequest, current=Depends(get_current_user)):
-    user = await db.users.find_one({"user_id": current["user_id"]})
-    if not user.get("mfa_enabled"):
-        return {"enabled": False}
-    if not pyotp.TOTP(user["mfa_secret"]).verify(req.code, valid_window=1):
-        raise HTTPException(status_code=400, detail="Code didn't match")
-    await db.users.update_one(
-        {"user_id": current["user_id"]},
-        {"$set": {"mfa_enabled": False}, "$unset": {"mfa_secret": ""}},
-    )
-    return {"enabled": False}
-
-@api_router.get("/auth/mfa/status")
-async def mfa_status(current=Depends(get_current_user)):
-    user = await db.users.find_one({"user_id": current["user_id"]})
-    return {
-        "enabled": bool(user.get("mfa_enabled")),
-        "required_for_role": current.get("role") in {ROLE_OWNER, ROLE_SCHOOL_ADMIN, ROLE_TEACHER},
-    }
-
-@api_router.post("/auth/login_with_mfa")
-async def login_with_mfa(req: LoginWithMfaRequest):
-    """Identical to login_username but enforces MFA when enabled."""
-    ident = (req.identifier or "").strip().lower()
-    user = await db.users.find_one({"$or": [
-        {"email": ident},
-        {"username": {"$regex": f"^{ident}$", "$options": "i"}},
-    ]})
-    if not user or not user.get("password_hash") or not verify_password(req.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    if user.get("mfa_enabled"):
-        if not req.code:
-            raise HTTPException(status_code=401, detail="MFA_REQUIRED")
-        if not pyotp.TOTP(user["mfa_secret"]).verify(req.code, valid_window=1):
-            raise HTTPException(status_code=401, detail="Invalid MFA code")
-    token = make_jwt(user["user_id"])
-    return {
-        "token": token,
-        "user": {
-            "user_id": user["user_id"], "name": user.get("name"), "email": user["email"],
-            "picture": user.get("picture"), "grade_level": user.get("grade_level", "uk_y10"),
-            "provider": user.get("provider", "email"), "role": user.get("role", ROLE_INDIVIDUAL),
-            "school_id": user.get("school_id"), "mfa_enabled": True,
-        },
-    }
+# ====================== Legacy MFA (REMOVED per product decision 2026-02-04) ======================
+# MFA endpoints were deprecated. The login flow no longer enforces MFA.
+# Historical `mfa_enabled`/`mfa_secret` fields may remain on old user docs — they are ignored.
 
 # --- Safety log (owner-only) ---
 
