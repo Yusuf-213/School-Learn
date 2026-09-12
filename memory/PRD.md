@@ -4,57 +4,50 @@ Learnify is a UK school management platform — preschool through university —
 covering AI tutoring, lesson planning, homework/assignment grading, parent portal,
 Stripe billing, safeguarding & UK GDPR compliance.
 
-## Iteration 23 (2026-03-01) — Calc guard · Boundaries · Version drawer · Parent RE
+## Iteration 24 (2026-03-01) — Boundary-aware grades · RE editor · Mental-maths streak · Swimming removed
 
-### Calc-Free KS1/KS2 Mode
-- New `frontend/src/lib/calcGuard.js` — mirrors backend `curriculum_data.can_use_calculator`.
-- `Practice.jsx` now inspects `user.grade_level`:
-  - **Below KS2 (Reception – Year 5)**: switches to a bespoke "Mental-methods mode" set (mental addition/subtraction, times tables, number bonds, mental fractions, grammar & spelling, everyday materials). Big amber banner explains the rule with a brain icon.
-  - **Year 6 and up**: usual set including calculator-only drills, each labelled with a calculator icon.
-- Filtering is client-side; the backend guard endpoint (`/api/curriculum/calculator-allowed`) is still authoritative for any server-driven flow.
+### Boundary-aware term grades
+- `HomeworkCreate` gained optional `exam_board / series / tier` fields — every assignment can carry its GCSE metadata.
+- `_compute_term_grade` now looks up `db.gcse_boundaries` when metadata is present, scales the raw mark to the sheet's max, and returns the actual awarded grade (with `grade_source: "boundary_sheet"`). Falls back to coarse `_pct_to_gcse_band` (`grade_source: "percentage_band"`) if no sheet.
+- Response now also includes `boundary_matched` count so the frontend can proudly say "N of M grades from your real boundary sheets."
 
-### Grade Boundaries Upload (retrospective, per board/subject/series/tier)
-- Backend endpoints:
-  - `POST /api/curriculum/gcse-boundaries` — SLT uploads a boundary sheet with grade→min-mark pairs, tier, max marks, notes. Upserts by `(school_id, board, subject, series, tier)`.
-  - `GET /api/curriculum/gcse-boundaries` — filter by `board`, `subject`, `series`.
-  - `DELETE /api/curriculum/gcse-boundaries/{id}` — SLT can remove a sheet.
-  - Internal `_apply_boundaries()` helper — looks up latest sheet, scales the raw mark to the sheet's max, and returns the awarded grade. Falls back to coarse percentage banding if no sheet.
-- Frontend `Teacher.jsx` gained a **Grade Boundaries** tab (`teacher-tab-boundaries`) with:
-  - Full upload form (board / subject / series / tier / max marks + per-grade min-mark inputs + notes).
-  - Live list of uploaded sheets with per-sheet grade pills (e.g. `9: ≥198`) and delete button.
-  - Empty state explains fallback behaviour.
+### SLT RE Syllabus Editor
+- `Teacher.jsx` gained a new **RE Syllabus** tab (`teacher-tab-re`) with a full editor:
+  - SACRE/provider input (`re-provider-input`).
+  - Linked policy URL (`re-policy-url-input`).
+  - Rich textarea for the locally-agreed syllabus (`re-syllabus-input`).
+  - Last-updated timestamp + author (`re-updated-at`).
+  - Publish button (`re-syllabus-save-btn`) POSTs to `PATCH /api/school/re-syllabus`.
+- Public read stays on `GET /api/school/re-syllabus`.
 
-### Version History Drawer
-- `LessonPlanView` in `Teacher.jsx` gained a **Version history** button (`lesson-history-toggle`).
-- Opens a lavender drawer (`lesson-history-drawer`) listing every archived revision with:
-  - Timestamp, edit prompt that produced it, objective/activity counts.
-  - One-click **Restore this version** button (`lesson-revision-restore-{index}`) which calls `POST /api/teacher/lessons/{id}/revisions/restore` and archives the currently-live plan before swapping.
+### Weekly Mental Maths Streak (pre-KS2 reward loop)
+- New backend endpoints:
+  - `POST /api/practice/mental-maths/complete` — bumps the streak once per UTC day; idempotent (same-day calls return `already_done_today: true`). Streak resets if the student skipped yesterday.
+  - `GET /api/practice/mental-streak` — returns current + best streak, total completions, and a 7-day heatmap.
+- `Practice.jsx` (below-KS2 branch only) shows a **peach streak card** (`mental-streak-card`) with a big flame, the current streak (`mental-streak-current`), best/total counters, 7-day heatmap of coloured pills (`mental-streak-heatmap`), and a big **"I did a drill today"** button (`mental-streak-log-btn`).
 
-### Parent RE Toggle (guardian withdrawal in one tap)
-- `Parent.jsx` adds an **RE toggle card** (`parent-re-toggle-card`) inside each linked-child detail view.
-- Switch (`parent-re-withdraw-toggle`) POSTs to `PATCH /api/students/{id}/re-withdrawal` with `{withdrawn: true, reason: "Parental request via Parent Portal"}`.
-- A **Withdrawn from RE** peach badge appears in the child header (`parent-re-withdrawn-badge`) when active.
-- Every change is stamped into `db.re_withdrawal_audit` for safeguarding compliance.
+### Swimming removed
+- Removed the `swim_25m` statutory reporting block from `curriculum_data.PRIMARY.statutory_reporting`.
+- `statutory_reporting` is now an empty list — no residual swimming fields anywhere in the curriculum tree, DB seed, or PRD.
 
-## Prior iteration summary (see git log for full changelog)
-- Iteration 22 — UK Curriculum Engine, Assignment Grade Book, Lesson Revisions API, School RE syllabus API, Parent RE withdrawal API, Pricing update (£5k / £9k / £14k / £35k / £85k), DPA reverted to v2.0.
-- Iteration 21 — Homework → Assignment flag, `[[CONFIRM_STEP]]` step-by-step AI tutor, Dreams edit/delete, Lesson refine API, Designer PPTX.
-- Iteration 20 — Parent progress cards, NotificationBell wired into AppLayout, Guardian Audit tab, Stripe downgrade path.
+## Prior iterations (see git log for full changelog)
+- Iteration 23 — Calc-Free KS1/KS2 mode, Grade Boundaries upload, Version History drawer, Parent RE toggle.
+- Iteration 22 — UK Curriculum Engine + APIs, Assignment Grade Book, Pricing update (£5k / £9k / £14k / £35k / £85k), DPA reverted to v2.0.
+- Iteration 21 — Homework → Assignment flag, `[[CONFIRM_STEP]]` AI tutor, Dreams edit, Lesson refine, Designer PPTX.
 
 ## Standing rules (do not regress)
-- App is **Learnify**. No "ScholarHub" or "Made with Emergent".
+- App is **Learnify**. No "ScholarHub" / "Made with Emergent".
 - Promo code `HWA26` = lifetime free.
-- **MFA removed** — do not reintroduce `pyotp` or `/mfa`.
-- Never restore fake pseudonyms.
-- All URLs / tokens / keys via `.env` only.
-- **Grade boundaries are never hardcoded** — schools upload retrospectively.
+- MFA removed — do not reintroduce `pyotp` or `/mfa`.
+- No fake pseudonyms.
+- All URLs/tokens/keys via `.env`.
+- Grade boundaries never hardcoded — schools upload each series.
 
 ## Backlog
-- **P1** — Wire the boundary lookup into `_compute_term_grade` per assignment (currently uses `_pct_to_gcse_band`; extend to call `_apply_boundaries` when the homework carries `board / subject / series / tier` metadata).
-- **P1** — School-admin RE syllabus editor UI (endpoint exists; frontend card needed in a school admin panel).
-- **P1** — Year 6 Swimming 25m form on the school-admin roster page.
-- **P2** — Split `server.py` into modular routers (>4,900 lines).
+- **P1** — Board metadata inputs on the homework create form so teachers can flag `exam_board / series / tier` at creation time.
+- **P1** — Render `awarded_grade` prominently on `MyRecord.jsx` Grades tab when it came from a real boundary sheet (grade_source badge).
+- **P2** — Split `server.py` (>5,000 lines) into modular routers.
 - **P3** — DB indexes flagged by deployment agent.
 
 ## Test credentials
-See `/app/memory/test_credentials.md` — Owner `Yusufm_1@outlook.com / The_Underdog`.
+See `/app/memory/test_credentials.md`.

@@ -141,24 +141,7 @@ PRIMARY = {
          "notes": "Locally-agreed syllabus. Parents may withdraw a pupil from RE (Education Act 1996 s.71)."},
         {"id": "citizenship_pshe", "name": "PSHE & Citizenship", "grading": "teacher_assessed"},
     ],
-    "statutory_reporting": [
-        {
-            "id": "swim_25m",
-            "applies_to": ["uk_y6"],
-            "required": True,
-            "label": "Swimming — 25m by end of Year 6",
-            "notes": (
-                "Schools MUST report by the end of Year 6 whether each pupil can swim competently, "
-                "confidently and proficiently over a distance of at least 25 metres, using a range "
-                "of strokes effectively, and perform safe self-rescue in different water-based situations."
-            ),
-            "fields": [
-                {"id": "swim_25m_confident", "label": "Swims 25m competently and confidently", "type": "bool"},
-                {"id": "swim_strokes", "label": "Uses a range of strokes", "type": "bool"},
-                {"id": "swim_self_rescue", "label": "Performs safe self-rescue", "type": "bool"},
-            ],
-        },
-    ],
+    "statutory_reporting": [],
     "calculator_use": {
         "allowed_from_year": "uk_y6",
         "notes": "Calculator-based features (paper 2/3 practice, calculator quizzes) are DISABLED for Reception–Year 5.",

@@ -1492,6 +1492,10 @@ class HomeworkCreate(BaseModel):
     due_date: Optional[str] = None
     max_score: int = 100
     is_assignment: bool = False
+    # Board-aware grading metadata (used by term-grade calculator when boundaries are uploaded)
+    exam_board: Optional[Literal["aqa", "edexcel", "ocr", "eduqas"]] = None
+    series: Optional[str] = None                        # e.g. "June 2025"
+    tier: Optional[Literal["foundation", "higher", "single"]] = None
 
 
 class AssignmentToggle(BaseModel):
@@ -2323,6 +2327,9 @@ async def create_homework(req: HomeworkCreate, current=Depends(require_authed_ro
         "max_score": req.max_score,
         "is_assignment": bool(req.is_assignment),
         "assignment_promoted_at": datetime.now(timezone.utc).isoformat() if req.is_assignment else None,
+        "exam_board": req.exam_board,
+        "series": req.series,
+        "tier": req.tier,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.homework.insert_one(doc)
@@ -2675,9 +2682,13 @@ async def _compute_term_grade(student_user_id: str) -> dict:
     subs = await db.homework_submissions.find({"student_user_id": student_user_id}, {"_id": 0}).to_list(1000)
     if not subs:
         return {"percentage": None, "assignments": [], "count": 0, "band": None}
+    # Look up the student's school once so we can query uploaded boundaries.
+    student = await db.users.find_one({"user_id": student_user_id}, {"_id": 0, "school_id": 1})
+    school_id = student.get("school_id") if student else None
     rows = []
     total_weighted = 0.0
     total_weight = 0.0
+    boundary_hits = 0
     for s in subs:
         hw = await db.homework.find_one({"homework_id": s["homework_id"], "is_assignment": True}, {"_id": 0})
         if not hw:
@@ -2688,6 +2699,25 @@ async def _compute_term_grade(student_user_id: str) -> dict:
         weight = float(hw.get("weight") if hw.get("weight") is not None else 1.0)
         total_weighted += pct * weight
         total_weight += weight
+        # Board-aware grade lookup — only if the homework carries board/subject/series/tier.
+        board = hw.get("exam_board"); series = hw.get("series"); tier = hw.get("tier") or "single"
+        subject = hw.get("subject")
+        awarded_grade = None
+        if board and subject and series:
+            row = await db.gcse_boundaries.find_one(
+                {"school_id": school_id, "board": board, "subject": subject, "series": series, "tier": tier},
+                sort=[("uploaded_at", -1)],
+            )
+            if row:
+                scaled = score if max_score == row.get("max_marks") else round(score * row["max_marks"] / max_score) if max_score else score
+                for r in sorted(row.get("rows") or [], key=lambda x: int(x.get("min_mark", 0)), reverse=True):
+                    if scaled >= int(r["min_mark"]):
+                        awarded_grade = r["grade"]
+                        boundary_hits += 1
+                        break
+                else:
+                    awarded_grade = "U"
+                    boundary_hits += 1
         rows.append({
             "homework_id": hw["homework_id"],
             "title": hw.get("title"),
@@ -2697,12 +2727,23 @@ async def _compute_term_grade(student_user_id: str) -> dict:
             "percentage": round(pct, 1),
             "weight": weight,
             "due_date": hw.get("due_date"),
+            "exam_board": board,
+            "series": series,
+            "tier": tier if board else None,
+            "awarded_grade": awarded_grade,
+            "grade_source": "boundary_sheet" if awarded_grade else "percentage_band",
         })
     if not rows or total_weight == 0:
         return {"percentage": None, "assignments": [], "count": 0, "band": None}
     percentage = round(total_weighted / total_weight, 1)
     band = _pct_to_gcse_band(percentage)
-    return {"percentage": percentage, "band": band, "count": len(rows), "assignments": rows}
+    return {
+        "percentage": percentage,
+        "band": band,
+        "count": len(rows),
+        "boundary_matched": boundary_hits,
+        "assignments": rows,
+    }
 
 
 def _pct_to_gcse_band(pct: float) -> str:
@@ -2805,6 +2846,84 @@ async def _apply_boundaries(school_id: Optional[str], board: str, subject: str, 
         if scaled_mark >= int(r["min_mark"]):
             return r["grade"]
     return "U"
+
+
+# ====================== Mental-maths streak (KS1/KS2 reward loop) ======================
+
+@api_router.post("/practice/mental-maths/complete")
+async def complete_mental_maths(current=Depends(get_current_user)):
+    """Log that the student completed a mental-methods drill today. Bumps the streak if today
+    hadn't been recorded yet. Idempotent — one bump per calendar day (UTC)."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    row = await db.mental_streaks.find_one({"user_id": current["user_id"]})
+    if row and row.get("last_completed_date") == today:
+        return {
+            "already_done_today": True,
+            "current_streak": row.get("current_streak", 1),
+            "best_streak": row.get("best_streak", 1),
+            "last_completed_date": today,
+        }
+    # Compute new streak: consecutive-days if yesterday was the last log, else reset to 1.
+    yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
+    prev_streak = int(row.get("current_streak", 0)) if row else 0
+    if row and row.get("last_completed_date") == yesterday:
+        new_streak = prev_streak + 1
+    else:
+        new_streak = 1
+    best_streak = max(int((row or {}).get("best_streak", 0)), new_streak)
+    total = int((row or {}).get("total_completions", 0)) + 1
+    await db.mental_streaks.update_one(
+        {"user_id": current["user_id"]},
+        {"$set": {
+            "user_id": current["user_id"],
+            "current_streak": new_streak,
+            "best_streak": best_streak,
+            "total_completions": total,
+            "last_completed_date": today,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, "$push": {"log": {"date": today, "at": datetime.now(timezone.utc).isoformat()}}},
+        upsert=True,
+    )
+    return {
+        "already_done_today": False,
+        "current_streak": new_streak,
+        "best_streak": best_streak,
+        "total_completions": total,
+        "last_completed_date": today,
+    }
+
+
+@api_router.get("/practice/mental-streak")
+async def my_mental_streak(current=Depends(get_current_user)):
+    """Return the caller's mental-maths streak (current + best + last-7-day heatmap)."""
+    row = await db.mental_streaks.find_one({"user_id": current["user_id"]}, {"_id": 0})
+    if not row:
+        return {"current_streak": 0, "best_streak": 0, "total_completions": 0,
+                "last_completed_date": None, "last_7_days": []}
+    # Break streak if the student missed a day — never in DB, always computed live.
+    today = datetime.now(timezone.utc).date()
+    last = row.get("last_completed_date")
+    current_streak = int(row.get("current_streak", 0))
+    if last:
+        try:
+            last_dt = datetime.fromisoformat(last).date()
+            if (today - last_dt).days >= 2:
+                current_streak = 0
+        except Exception:
+            pass
+    log_dates = {e.get("date") for e in (row.get("log") or [])}
+    heatmap = [
+        {"date": (today - timedelta(days=i)).isoformat(),
+         "done": (today - timedelta(days=i)).isoformat() in log_dates}
+        for i in range(6, -1, -1)
+    ]
+    return {
+        "current_streak": current_streak,
+        "best_streak": int(row.get("best_streak", 0)),
+        "total_completions": int(row.get("total_completions", 0)),
+        "last_completed_date": last,
+        "last_7_days": heatmap,
+    }
 
 
 # ====================== Lesson Revision History (view + restore) ======================

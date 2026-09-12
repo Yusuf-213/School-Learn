@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
 import { SUBJECTS } from "@/lib/subjects";
-import { Lightning, Plus, ChartBar, Sparkle, FileText, Warning, ChalkboardTeacher, ArrowsClockwise, Prohibit, Clock, LockOpen, ClockCounterClockwise, ArrowUUpLeft, Scales } from "@phosphor-icons/react";
+import { Lightning, Plus, ChartBar, Sparkle, FileText, Warning, ChalkboardTeacher, ArrowsClockwise, Prohibit, Clock, LockOpen, ClockCounterClockwise, ArrowUUpLeft, Scales, BookOpenText } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const TABS = [
@@ -11,6 +11,7 @@ const TABS = [
   { id: "detentions", label: "Detentions", icon: Warning },
   { id: "locks", label: "Locks", icon: Prohibit },
   { id: "boundaries", label: "Grade Boundaries", icon: Scales },
+  { id: "re", label: "RE Syllabus", icon: BookOpenText },
 ];
 
 export default function Teacher() {
@@ -44,6 +45,7 @@ export default function Teacher() {
         {tab === "detentions" && <DetentionsTab />}
         {tab === "locks" && <LocksTab />}
         {tab === "boundaries" && <BoundariesTab />}
+        {tab === "re" && <ReSyllabusTab />}
       </div>
     </AppLayout>
   );
@@ -736,7 +738,91 @@ function LocksTab() {
 }
 
 
-function BoundariesTab() {
+function ReSyllabusTab() {
+  const [data, setData] = useState({ syllabus: "", provider: "", linked_policy_url: "" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.get("/school/re-syllabus").then(({ data }) => {
+      setData({
+        syllabus: data?.syllabus || "",
+        provider: data?.provider || "",
+        linked_policy_url: data?.linked_policy_url || "",
+        updated_at: data?.updated_at,
+        updated_by: data?.updated_by,
+      });
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const save = async (e) => {
+    e.preventDefault();
+    if (!data.syllabus.trim()) { toast.error("Add the syllabus text before publishing."); return; }
+    setSaving(true);
+    try {
+      const { data: fresh } = await api.patch("/school/re-syllabus", {
+        syllabus: data.syllabus,
+        provider: data.provider || null,
+        linked_policy_url: data.linked_policy_url || null,
+      });
+      setData((d) => ({ ...d, ...fresh }));
+      toast.success("RE syllabus published across the school.");
+    } catch (ex) {
+      toast.error(ex.response?.data?.detail || "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <div className="brutal-card p-6 text-[#4A4A4A]">Loading…</div>;
+  return (
+    <div className="space-y-4" data-testid="re-syllabus-tab">
+      <div className="brutal-card p-4 bg-lavender flex items-start gap-3">
+        <BookOpenText size={22} weight="fill" />
+        <div>
+          <div className="font-display font-bold text-lg">Religious Education — locally-agreed syllabus</div>
+          <p className="text-sm text-[#333]">
+            Publish your school's locally-agreed RE syllabus. Parents and students see it on the RE page.
+            Under Education Act 1996 s.71, parents may withdraw a pupil from RE — the toggle lives in the Parent Portal.
+          </p>
+        </div>
+      </div>
+
+      <form onSubmit={save} className="brutal-card p-4 bg-white space-y-3" data-testid="re-syllabus-form">
+        <div className="grid sm:grid-cols-2 gap-3">
+          <label className="block">
+            <span className="text-xs uppercase tracking-[0.2em] font-bold">SACRE / provider</span>
+            <input value={data.provider} onChange={(e) => setData({ ...data, provider: e.target.value })}
+              placeholder="e.g. Hampshire SACRE, Diocese of Southwark"
+              className="mt-2 brutal-input w-full" data-testid="re-provider-input" />
+          </label>
+          <label className="block">
+            <span className="text-xs uppercase tracking-[0.2em] font-bold">Linked policy URL</span>
+            <input type="url" value={data.linked_policy_url} onChange={(e) => setData({ ...data, linked_policy_url: e.target.value })}
+              placeholder="https://schoolwebsite.uk/policies/re"
+              className="mt-2 brutal-input w-full" data-testid="re-policy-url-input" />
+          </label>
+        </div>
+        <label className="block">
+          <span className="text-xs uppercase tracking-[0.2em] font-bold">Syllabus (rich text supported)</span>
+          <textarea rows={12} required value={data.syllabus} onChange={(e) => setData({ ...data, syllabus: e.target.value })}
+            placeholder="Year 7 — Autumn: Judaism (creation, festivals, Torah study)&#10;Year 7 — Spring: Christianity (life of Jesus, parables, Eucharist)&#10;Year 7 — Summer: Islam (Five Pillars, Qur'an, Muhammad ﷺ)&#10;..."
+            className="mt-2 brutal-input w-full font-mono text-sm" data-testid="re-syllabus-input" />
+        </label>
+        {data.updated_at && (
+          <div className="text-xs text-[#4A4A4A]" data-testid="re-updated-at">
+            Last updated {new Date(data.updated_at).toLocaleString()}{data.updated_by ? ` by ${data.updated_by}` : ""}
+          </div>
+        )}
+        <button type="submit" disabled={saving} data-testid="re-syllabus-save-btn"
+          className="brutal-btn bg-ink text-white inline-flex items-center gap-2 disabled:opacity-60">
+          <Sparkle size={16} weight="bold" /> {saving ? "Publishing…" : "Publish syllabus"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
