@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
 import { SUBJECTS } from "@/lib/subjects";
-import { Lightning, Plus, ChartBar, Sparkle, FileText, Warning, ChalkboardTeacher, ArrowsClockwise, Prohibit, Clock, LockOpen, ClockCounterClockwise, ArrowUUpLeft, Scales, BookOpenText } from "@phosphor-icons/react";
+import { Lightning, Plus, ChartBar, Sparkle, FileText, Warning, ChalkboardTeacher, ArrowsClockwise, Prohibit, Clock, LockOpen, ClockCounterClockwise, ArrowUUpLeft, Scales, BookOpenText, Users as UsersIcon, UploadSimple, Trash } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const TABS = [
@@ -10,6 +10,7 @@ const TABS = [
   { id: "homework", label: "Homework", icon: FileText },
   { id: "detentions", label: "Detentions", icon: Warning },
   { id: "locks", label: "Locks", icon: Prohibit },
+  { id: "classes", label: "Classes", icon: UsersIcon },
   { id: "boundaries", label: "Grade Boundaries", icon: Scales },
   { id: "re", label: "RE Syllabus", icon: BookOpenText },
 ];
@@ -44,6 +45,7 @@ export default function Teacher() {
         {tab === "homework" && <HomeworkTab />}
         {tab === "detentions" && <DetentionsTab />}
         {tab === "locks" && <LocksTab />}
+        {tab === "classes" && <ClassesTab />}
         {tab === "boundaries" && <BoundariesTab />}
         {tab === "re" && <ReSyllabusTab />}
       </div>
@@ -822,6 +824,160 @@ function ReSyllabusTab() {
     </div>
   );
 }
+
+function ClassesTab() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ name: "", year_group: "", subject: "" });
+  const [saving, setSaving] = useState(false);
+  const [csvFile, setCsvFile] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [lastImport, setLastImport] = useState(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/school/classes");
+      setRows(data.classes || []);
+    } catch { setRows([]); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const create = async (e) => {
+    e.preventDefault();
+    if (!form.name.trim()) { toast.error("Class name required."); return; }
+    setSaving(true);
+    try {
+      await api.post("/school/classes", form);
+      toast.success("Class added.");
+      setForm({ name: "", year_group: "", subject: "" });
+      setOpen(false);
+      load();
+    } catch (ex) {
+      toast.error(ex.response?.data?.detail || "Failed");
+    } finally { setSaving(false); }
+  };
+
+  const remove = async (id, name) => {
+    if (!window.confirm(`Delete class "${name}"? Students stay in the school but lose this grouping.`)) return;
+    try {
+      await api.delete(`/school/classes/${id}`);
+      setRows((r) => r.filter((x) => x.class_id !== id));
+      toast.success("Class deleted.");
+    } catch (ex) {
+      toast.error(ex.response?.data?.detail || "Failed");
+    }
+  };
+
+  const importCsv = async (e) => {
+    e.preventDefault();
+    if (!csvFile) { toast.error("Choose a CSV first."); return; }
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", csvFile);
+      const { data } = await api.post("/school/students/import", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setLastImport(data);
+      toast.success(`Imported ${data.created_users} new students · ${data.linked_to_class} class assignments · ${(data.created_classes || []).length} new classes.`);
+      load();
+    } catch (ex) {
+      toast.error(ex.response?.data?.detail || "Import failed");
+    } finally { setImporting(false); }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="classes-tab">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-[#4A4A4A] text-sm max-w-3xl">
+          Add, rename or remove classes for your school. Or drop in a spreadsheet — Learnify auto-creates
+          missing classes and drops each student into the right one.
+        </div>
+        <button onClick={() => setOpen((v) => !v)} className="brutal-btn bg-ink text-white inline-flex items-center gap-2" data-testid="classes-new-btn">
+          <Plus size={14} weight="bold" /> {open ? "Close" : "Add class"}
+        </button>
+      </div>
+
+      {open && (
+        <form onSubmit={create} className="brutal-card p-4 bg-butter space-y-3" data-testid="class-form">
+          <div className="grid sm:grid-cols-3 gap-3">
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.2em] font-bold">Class name</span>
+              <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="10R/Ma1" className="mt-2 brutal-input w-full" data-testid="class-name-input" />
+            </label>
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.2em] font-bold">Year group</span>
+              <input value={form.year_group} onChange={(e) => setForm({ ...form, year_group: e.target.value })}
+                placeholder="uk_y10" className="mt-2 brutal-input w-full" data-testid="class-year-input" />
+            </label>
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.2em] font-bold">Subject (optional)</span>
+              <input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })}
+                placeholder="Mathematics" className="mt-2 brutal-input w-full" data-testid="class-subject-input" />
+            </label>
+          </div>
+          <button type="submit" disabled={saving} className="brutal-btn bg-ink text-white disabled:opacity-60" data-testid="class-save-btn">
+            {saving ? "Saving…" : "Create class"}
+          </button>
+        </form>
+      )}
+
+      <div className="brutal-card p-4 bg-lavender space-y-3" data-testid="csv-import-card">
+        <div className="flex items-start gap-3">
+          <UploadSimple size={22} weight="fill" />
+          <div>
+            <div className="font-display font-bold text-lg">Bulk import spreadsheet</div>
+            <p className="text-sm text-[#333] mt-1">
+              CSV columns: <code className="text-xs">name, email, year_group, class_name</code> · optional: <code className="text-xs">password</code>.
+              Missing classes are auto-created. Duplicates are skipped.
+            </p>
+          </div>
+        </div>
+        <form onSubmit={importCsv} className="flex flex-wrap items-center gap-2">
+          <input type="file" accept=".csv,text/csv" onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
+            data-testid="csv-file-input" className="brutal-input bg-white flex-1" />
+          <button type="submit" disabled={importing || !csvFile} data-testid="csv-import-btn"
+            className="brutal-btn bg-ink text-white inline-flex items-center gap-2 disabled:opacity-60">
+            <UploadSimple size={14} weight="bold" /> {importing ? "Importing…" : "Import spreadsheet"}
+          </button>
+        </form>
+        {lastImport && (
+          <div className="brutal-card p-3 bg-white text-sm" data-testid="import-result">
+            <div className="font-bold">Last import</div>
+            <div className="text-xs text-[#4A4A4A]">
+              {lastImport.processed} rows · {lastImport.created_users} new students · {lastImport.linked_to_class} assignments · {(lastImport.created_classes || []).length} new classes
+            </div>
+          </div>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="brutal-card p-6 text-[#4A4A4A]">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="brutal-card p-6 text-[#4A4A4A]" data-testid="classes-empty">No classes yet — add one above or drop in a spreadsheet.</div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((c) => (
+            <div key={c.class_id} className="brutal-card p-3 bg-white flex flex-wrap justify-between items-center gap-3" data-testid={`class-row-${c.class_id}`}>
+              <div>
+                <div className="font-display font-bold text-base">{c.name}</div>
+                <div className="text-xs text-[#4A4A4A]">
+                  {c.year_group || "no year"} · {c.subject || "no subject"} · {c.teacher_count || 0} teacher{c.teacher_count === 1 ? "" : "s"} · {c.student_count || 0} student{c.student_count === 1 ? "" : "s"}
+                </div>
+              </div>
+              <button onClick={() => remove(c.class_id, c.name)} className="brutal-btn bg-white hover:bg-peach text-sm inline-flex items-center gap-1" data-testid={`class-delete-${c.class_id}`}>
+                <Trash size={14} weight="bold" /> Delete
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function BoundariesTab() {
   const [rows, setRows] = useState([]);

@@ -1533,6 +1533,11 @@ class DreamSubmit(BaseModel):
 class SuggestionSubmit(BaseModel):
     category: str  # 'bug','feature','content','other'
     message: str
+    scope: Literal["school", "individual"] = "individual"  # school = needs 2 students + 2 teachers to escalate
+
+
+class SuggestionCosign(BaseModel):
+    agree: bool = True                                    # False = veto (removes any past agree)
 
 # --- school helpers ---
 
@@ -1755,8 +1760,18 @@ async def owner_stats(current=Depends(get_current_user)):
 async def owner_suggestions(current=Depends(get_current_user)):
     if not is_owner(current):
         raise HTTPException(status_code=403, detail="Owner only")
-    items = await db.suggestions.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
-    return {"items": items}
+    # Show only what earned the owner's inbox:
+    #  • individual scope — always visible.
+    #  • school scope — only once escalated (≥2 students + ≥2 teachers co-signed).
+    items = await db.suggestions.find(
+        {"$or": [{"scope": "individual"}, {"status": "escalated"}]},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(500)
+    # Group so the owner can eyeball school vs individual instantly.
+    school = [x for x in items if x.get("scope") == "school"]
+    individual = [x for x in items if x.get("scope") != "school"]
+    return {"items": items, "school": school, "individual": individual,
+            "counts": {"school": len(school), "individual": len(individual)}}
 
 # ====================== School admin ======================
 
@@ -1899,6 +1914,118 @@ async def delete_class(class_id: str, current=Depends(get_current_user)):
     _require_school_ctx(current, row)
     await db.classes.delete_one({"class_id": class_id})
     return {"deleted": True}
+
+
+# ---------------- Bulk CSV student import (SLT-only spreadsheet upload) ----------------
+
+from fastapi import UploadFile, File
+
+
+@api_router.post("/school/students/import")
+async def bulk_import_students(file: UploadFile = File(...), current=Depends(get_current_user)):
+    """Paste a spreadsheet (CSV) with columns: name, email, year_group, class_name (any casing).
+    Optional columns: password (auto-generated if missing), grade_level (falls back to year_group).
+    Behaviour:
+      • Auto-creates missing classes (grouped by class_name + year_group).
+      • Adds students to the class roster.
+      • Skips duplicates (same email in the same school).
+      • Returns a per-row result so SLT sees exactly what happened.
+    Only SLT (school_admin) + owner can run this."""
+    import csv, io, secrets, string
+    if not is_owner(current) and current.get("role") != ROLE_SCHOOL_ADMIN:
+        raise HTTPException(status_code=403, detail="School admin only")
+    sid = current.get("school_id")
+    if not sid and not is_owner(current):
+        raise HTTPException(status_code=400, detail="No school on account")
+
+    raw = (await file.read()).decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(raw))
+    # Normalise header aliases (accept "Full Name", "Year", "Class", etc.).
+    def norm(k): return (k or "").strip().lower().replace(" ", "_")
+
+    headers = {norm(h): h for h in (reader.fieldnames or [])}
+    def col(row, *aliases, default=""):
+        for a in aliases:
+            k = headers.get(a)
+            if k and row.get(k) is not None:
+                v = str(row[k]).strip()
+                if v:
+                    return v
+        return default
+
+    results = []
+    created_users = 0
+    linked_to_class = 0
+    created_classes = {}   # (class_name, year_group) -> class_id
+    for i, row in enumerate(reader, start=2):  # start=2 because row 1 was the header
+        name = col(row, "name", "full_name", "student_name")
+        email = col(row, "email", "email_address").lower()
+        year_group = col(row, "year_group", "year", "grade_level", "grade")
+        class_name = col(row, "class_name", "class", "form", "form_group")
+        password = col(row, "password") or ("Learnify_" + "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(8)))
+        if not email:
+            results.append({"row": i, "status": "skipped", "reason": "no email"})
+            continue
+        # Create user if not present, else reuse.
+        existing = await db.users.find_one({"email": email})
+        if existing:
+            user_id = existing["user_id"]
+            # Only re-scope schoolless students to this school.
+            if not existing.get("school_id") and sid:
+                await db.users.update_one({"user_id": user_id}, {"$set": {"school_id": sid, "role": "student"}})
+            row_status = "linked_existing"
+        else:
+            user_id = f"usr_{uuid.uuid4().hex[:12]}"
+            grade_level = normalize_grade_level(year_group) if year_group else None
+            await db.users.insert_one({
+                "user_id": user_id,
+                "email": email,
+                "name": name or email.split("@")[0],
+                "role": "student",
+                "school_id": sid,
+                "grade_level": grade_level,
+                "hashed_password": hash_password(password),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "imported_by": current.get("email"),
+            })
+            created_users += 1
+            row_status = "created"
+        # Auto-assign to class (create if missing).
+        if class_name:
+            key = (class_name.lower(), (year_group or "").lower())
+            cls_id = created_classes.get(key)
+            if not cls_id:
+                cls = await db.classes.find_one({"school_id": sid, "name": class_name})
+                if cls:
+                    cls_id = cls["class_id"]
+                else:
+                    cls_id = f"class_{uuid.uuid4().hex[:10]}"
+                    await db.classes.insert_one({
+                        "class_id": cls_id,
+                        "school_id": sid,
+                        "name": class_name,
+                        "year_group": year_group,
+                        "subject": None,
+                        "teacher_emails": [],
+                        "student_emails": [],
+                        "created_at": datetime.now(timezone.utc).isoformat(),
+                        "imported": True,
+                    })
+                created_classes[key] = cls_id
+            await db.classes.update_one({"class_id": cls_id}, {"$addToSet": {"student_emails": email}})
+            linked_to_class += 1
+        results.append({
+            "row": i, "status": row_status, "email": email, "name": name,
+            "year_group": year_group, "class_name": class_name,
+        })
+    return {
+        "ok": True,
+        "created_users": created_users,
+        "linked_to_class": linked_to_class,
+        "created_classes": [{"name": k[0], "year_group": k[1], "class_id": v} for k, v in created_classes.items()],
+        "rows": results,
+        "processed": len(results),
+    }
 
 
 # ---------------- Onboarding tour state ----------------
@@ -3921,6 +4048,18 @@ async def set_detention(req: DetentionCreate, current=Depends(require_authed_rol
     }
     await db.detentions.insert_one(doc)
     doc.pop("_id", None)
+    # Ping the student straight away so they can see it from the notification bell + dashboard.
+    try:
+        await _notify(
+            req.student_user_id,
+            kind="detention",
+            title="You have a new detention",
+            body=f"{req.duration_minutes}-minute detention on {req.date} — reason: {req.reason}",
+            url="/my-record",
+            meta={"detention_id": doc["detention_id"], "set_by_name": current.get("name")},
+        )
+    except Exception:
+        logging.exception("failed to notify student of detention")
     return doc
 
 @api_router.get("/teacher/detentions")
@@ -4099,18 +4238,111 @@ async def submit_suggestion(req: SuggestionSubmit, current=Depends(get_current_u
     mod = await moderate_text(req.message, "suggestion", current)
     if mod["action"] == "block":
         raise HTTPException(status_code=400, detail="That content can't be processed.")
+    scope = req.scope if req.scope in ("school", "individual") else "individual"
+    # A school-scoped suggestion only reaches the owner once 2 students + 2 teachers co-sign it.
+    # Individual-scoped ones (or ones from unaffiliated users) reach the owner immediately.
+    author_role = current.get("role")
+    school_id = current.get("school_id")
+    if scope == "school" and not school_id:
+        raise HTTPException(status_code=400, detail="School-wide suggestions require a school account. Switch to 'Just me' scope instead.")
+    initial_status = "pending_cosign" if scope == "school" else "individual"
+    cosigners = []
+    if scope == "school" and author_role in {"student", "teacher"}:
+        # Author's own vote counts.
+        cosigners.append({
+            "user_id": current["user_id"],
+            "email": current.get("email"),
+            "name": current.get("name"),
+            "role": author_role,
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
     doc = {
         "suggestion_id": f"sug_{uuid.uuid4().hex[:8]}",
         "user_id": current["user_id"],
         "user_email": current.get("email"),
         "user_name": current.get("name"),
+        "user_role": author_role,
+        "school_id": school_id if scope == "school" else None,
+        "scope": scope,
         "category": req.category,
         "message": req.message,
+        "status": initial_status,
+        "cosigners": cosigners,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.suggestions.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+
+@api_router.get("/suggestions/pending")
+async def list_pending_suggestions(current=Depends(get_current_user)):
+    """Suggestions from your school still gathering co-signatures. Anyone at the school can view;
+    only students + teachers can co-sign. The current user's own vote is highlighted for the UI."""
+    sid = current.get("school_id")
+    if is_owner(current):
+        q = {"scope": "school", "status": "pending_cosign"}
+    else:
+        if not sid:
+            return {"items": []}
+        q = {"scope": "school", "status": "pending_cosign", "school_id": sid}
+    items = await db.suggestions.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # Tally each so the UI can render "1/2 students + 0/2 teachers → 1 more student needed".
+    my_id = current["user_id"]
+    out = []
+    for s in items:
+        c = s.get("cosigners") or []
+        students = sum(1 for x in c if x.get("role") == "student")
+        teachers = sum(1 for x in c if x.get("role") == "teacher")
+        out.append({
+            **s,
+            "student_cosigns": students,
+            "teacher_cosigns": teachers,
+            "needs_students": max(0, 2 - students),
+            "needs_teachers": max(0, 2 - teachers),
+            "my_vote": next((x for x in c if x.get("user_id") == my_id), None),
+        })
+    return {"items": out}
+
+
+@api_router.post("/suggestions/{suggestion_id}/cosign")
+async def cosign_suggestion(suggestion_id: str, req: SuggestionCosign, current=Depends(get_current_user)):
+    """Add or withdraw a student/teacher co-signature. Once ≥2 students AND ≥2 teachers have
+    co-signed, the suggestion auto-escalates to the owner's inbox."""
+    if is_owner(current):
+        raise HTTPException(status_code=403, detail="Only students and teachers co-sign — you'll see this once escalated.")
+    if current.get("role") not in {"student", "teacher"}:
+        raise HTTPException(status_code=403, detail="Only students and teachers can co-sign school suggestions.")
+    row = await db.suggestions.find_one({"suggestion_id": suggestion_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    if row.get("scope") != "school":
+        raise HTTPException(status_code=400, detail="This suggestion is individual — no co-signatures required.")
+    if row.get("school_id") and row.get("school_id") != current.get("school_id"):
+        raise HTTPException(status_code=403, detail="Different school")
+    cosigners = [c for c in (row.get("cosigners") or []) if c.get("user_id") != current["user_id"]]
+    if req.agree:
+        cosigners.append({
+            "user_id": current["user_id"],
+            "email": current.get("email"),
+            "name": current.get("name"),
+            "role": current.get("role"),
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
+    students = sum(1 for x in cosigners if x.get("role") == "student")
+    teachers = sum(1 for x in cosigners if x.get("role") == "teacher")
+    escalated = students >= 2 and teachers >= 2
+    updates = {
+        "cosigners": cosigners,
+        "student_cosigns": students,
+        "teacher_cosigns": teachers,
+        "status": "escalated" if escalated else "pending_cosign",
+    }
+    if escalated and not row.get("escalated_at"):
+        updates["escalated_at"] = datetime.now(timezone.utc).isoformat()
+    await db.suggestions.update_one({"suggestion_id": suggestion_id}, {"$set": updates})
+    fresh = await db.suggestions.find_one({"suggestion_id": suggestion_id}, {"_id": 0})
+    return {**fresh, "just_escalated": escalated and not row.get("escalated_at")}
 
 # ====================== Legacy MFA (REMOVED per product decision 2026-02-04) ======================
 # MFA endpoints were deprecated. The login flow no longer enforces MFA.

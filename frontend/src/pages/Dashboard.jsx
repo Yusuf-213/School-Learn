@@ -6,7 +6,7 @@ import GradeLevelSelect from "@/components/GradeLevelSelect";
 import { SUBJECTS, gradeLevelLabel } from "@/lib/subjects";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { Atom, BookOpen, Bank, Barbell, Function, Sparkle, ArrowRight, Trophy, Clock, Link as LinkIcon, ShieldCheck, X } from "@phosphor-icons/react";
+import { Atom, BookOpen, Bank, Barbell, Function, Sparkle, ArrowRight, Trophy, Clock, Link as LinkIcon, ShieldCheck, X, Warning } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const iconMap = { Atom, BookOpen, Bank, Barbell, Function };
@@ -58,6 +58,48 @@ function MagicLinkBanner() {
 }
 
 
+function DetentionAlert() {
+  const [items, setItems] = useState([]);
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    api.get("/student/my-detentions")
+      .then(({ data }) => {
+        const today = new Date();
+        const upcoming = (data.items || []).filter((d) => {
+          if (d.status === "attended") return false;
+          const when = d.date ? new Date(d.date) : null;
+          return when && when >= new Date(today.toDateString());
+        });
+        setItems(upcoming);
+      }).catch(() => {});
+  }, []);
+  if (!items.length || dismissed) return null;
+  const next = items[0];
+  return (
+    <div className="brutal-card p-5 bg-peach" data-testid="detention-alert">
+      <div className="flex items-start gap-3">
+        <Warning size={24} weight="fill" className="text-red-800" />
+        <div className="flex-1 min-w-0">
+          <div className="text-xs uppercase tracking-[0.2em] font-bold mb-1">Detention on your record</div>
+          <h3 className="font-display font-bold text-lg" data-testid="detention-alert-title">
+            {next.duration_minutes}-min detention on {new Date(next.date).toLocaleDateString()}
+          </h3>
+          <p className="text-sm mt-1"><strong>Reason:</strong> {next.reason}{next.set_by_name ? ` · set by ${next.set_by_name}` : ""}</p>
+          {items.length > 1 && <p className="text-xs mt-1 text-[#4A4A4A]">{items.length - 1} more upcoming — see your record.</p>}
+          <div className="mt-3 flex gap-2">
+            <Link to="/my-record" className="brutal-btn bg-ink text-white text-sm inline-flex items-center gap-2" data-testid="detention-alert-view">
+              View my record <ArrowRight size={14} weight="bold" />
+            </Link>
+            <button onClick={() => setDismissed(true)} className="text-sm underline text-[#4A4A4A]" data-testid="detention-alert-dismiss">Dismiss</button>
+          </div>
+        </div>
+        <button onClick={() => setDismissed(true)} aria-label="Close" className="text-ink hover:text-red-800"><X size={16} weight="bold" /></button>
+      </div>
+    </div>
+  );
+}
+
+
 export default function Dashboard() {
   const { user, refreshUser } = useAuth();
   const [stats, setStats] = useState({ topics_started: 0, topics_completed: 0 });
@@ -84,6 +126,7 @@ export default function Dashboard() {
     <AppLayout>
       <div className="max-w-6xl space-y-10">
         <MagicLinkBanner />
+        <DetentionAlert />
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between gap-4 animate-fade-up">
           <div>

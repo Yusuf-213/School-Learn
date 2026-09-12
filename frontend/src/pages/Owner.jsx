@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { Buildings, Users, BookOpen, Lightning, ChartLineUp, Chat, Crown, Ticket, ShieldCheck, Link as LinkIcon, UsersFour } from "@phosphor-icons/react";
+import { Buildings, Users, User, BookOpen, Lightning, ChartLineUp, Chat, Crown, Ticket, ShieldCheck, Link as LinkIcon, UsersFour } from "@phosphor-icons/react";
 import BusinessPanel from "./owner/BusinessPanel";
 import PromoCodesPanel from "./owner/PromoCodesPanel";
 import PaymentLinksPanel from "./owner/PaymentLinksPanel";
@@ -115,25 +115,62 @@ export default function Owner() {
               )}
             </section>
 
-            <section>
-              <h2 className="font-display font-extrabold text-2xl tracking-tight mb-4">Recent suggestions</h2>
-              {suggestions.length === 0 ? (
-                <div className="brutal-card p-6 text-[#4A4A4A]">Nothing in the inbox yet.</div>
-              ) : (
-                <div className="space-y-2">
-                  {suggestions.slice(0, 20).map((s) => (
-                    <div key={s.suggestion_id} className="brutal-card p-4 bg-white" data-testid={`owner-suggestion-${s.suggestion_id}`}>
-                      <div className="flex justify-between items-start gap-3">
-                        <div>
-                          <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">{s.category}</div>
-                          <div className="text-sm mt-1">{s.message}</div>
-                        </div>
-                        <div className="text-xs text-[#4A4A4A]">{s.user_name || s.user_email}<br />{new Date(s.created_at).toLocaleDateString()}</div>
-                      </div>
-                    </div>
-                  ))}
+            <section data-testid="owner-suggestions-section">
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <h2 className="font-display font-extrabold text-2xl tracking-tight">Suggestions inbox</h2>
+                <div className="text-xs text-[#4A4A4A]">
+                  {suggestions.filter((s) => s.scope === "school").length} school · {suggestions.filter((s) => s.scope !== "school").length} individual
                 </div>
-              )}
+              </div>
+
+              <div className="space-y-6">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.2em] font-bold mb-2 flex items-center gap-2"><Users size={14} weight="bold" /> School-wide (2 students + 2 teachers co-signed)</div>
+                  {suggestions.filter((s) => s.scope === "school").length === 0 ? (
+                    <div className="brutal-card p-6 text-[#4A4A4A]" data-testid="owner-suggestions-school-empty">No school-wide suggestions have escalated yet.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {suggestions.filter((s) => s.scope === "school").slice(0, 25).map((s) => (
+                        <div key={s.suggestion_id} className="brutal-card p-4 bg-mint" data-testid={`owner-suggestion-school-${s.suggestion_id}`}>
+                          <div className="flex justify-between items-start gap-3 flex-wrap">
+                            <div className="flex-1 min-w-[220px]">
+                              <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">
+                                {s.category} · <ShieldCheck size={12} weight="fill" className="inline" /> ESCALATED
+                              </div>
+                              <div className="text-sm mt-1 whitespace-pre-line">{s.message}</div>
+                              <div className="text-xs text-[#4A4A4A] mt-2">
+                                Co-signed by {s.student_cosigns || 0} students · {s.teacher_cosigns || 0} teachers
+                              </div>
+                            </div>
+                            <div className="text-xs text-[#4A4A4A]">{s.user_name || s.user_email}<br />{new Date(s.escalated_at || s.created_at).toLocaleDateString()}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="text-xs uppercase tracking-[0.2em] font-bold mb-2 flex items-center gap-2"><User size={14} weight="bold" /> Individual (straight to you)</div>
+                  {suggestions.filter((s) => s.scope !== "school").length === 0 ? (
+                    <div className="brutal-card p-6 text-[#4A4A4A]" data-testid="owner-suggestions-individual-empty">No individual suggestions yet.</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {suggestions.filter((s) => s.scope !== "school").slice(0, 25).map((s) => (
+                        <div key={s.suggestion_id} className="brutal-card p-4 bg-white" data-testid={`owner-suggestion-individual-${s.suggestion_id}`}>
+                          <div className="flex justify-between items-start gap-3 flex-wrap">
+                            <div className="flex-1 min-w-[220px]">
+                              <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">{s.category}</div>
+                              <div className="text-sm mt-1 whitespace-pre-line">{s.message}</div>
+                            </div>
+                            <div className="text-xs text-[#4A4A4A]">{s.user_name || s.user_email}<br />{new Date(s.created_at).toLocaleDateString()}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
             </section>
 
             <BusinessPanel />
