@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import GlobalNav from "@/components/GlobalNav";
 import { api } from "@/lib/api";
-import { CheckCircle, Sparkle, Crown, Buildings, XCircle, ArrowsClockwise, Prohibit, EnvelopeSimple } from "@phosphor-icons/react";
+import { CheckCircle, Sparkle, Crown, Buildings, XCircle, ArrowsClockwise, Prohibit, EnvelopeSimple, ArrowDown, ArrowCounterClockwise } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -33,6 +33,7 @@ export default function Pricing() {
   const [billing, setBilling] = useState(null);
   const [loading, setLoading] = useState(null);
   const [cancelBusy, setCancelBusy] = useState(false);
+  const [downgradeBusy, setDowngradeBusy] = useState(null);
 
   const refreshBilling = async () => {
     try {
@@ -77,6 +78,38 @@ export default function Pricing() {
       toast.error(e.response?.data?.detail || "Couldn't cancel subscription");
     } finally {
       setCancelBusy(false);
+    }
+  };
+
+  const PLAN_ORDER = ["free", "basic", "standard", "pro"];
+  const PLAN_NAMES = { free: "Free", basic: "Basic", standard: "Standard", pro: "Pro" };
+
+  const scheduleDowngrade = async (new_plan_id) => {
+    const name = PLAN_NAMES[new_plan_id];
+    const when = billing?.expires_at ? new Date(billing.expires_at).toLocaleDateString() : "your period ends";
+    if (!window.confirm(`Switch to ${name} when your current ${billing?.plan?.name} period ends?\n\nYou'll keep full ${billing?.plan?.name} access until ${when}. On that date you'll drop to ${name} and be billed the new price going forward. You can undo any time before then.`)) return;
+    setDowngradeBusy(new_plan_id);
+    try {
+      await api.post("/billing/schedule-downgrade", { new_plan_id });
+      toast.success(`Scheduled downgrade to ${name}. Takes effect ${when}.`);
+      await refreshBilling();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Couldn't schedule downgrade");
+    } finally {
+      setDowngradeBusy(null);
+    }
+  };
+
+  const cancelDowngrade = async () => {
+    setDowngradeBusy("cancel");
+    try {
+      await api.post("/billing/cancel-downgrade");
+      toast.success("Scheduled change cancelled — you'll stay on your current plan.");
+      await refreshBilling();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Couldn't cancel scheduled change");
+    } finally {
+      setDowngradeBusy(null);
     }
   };
 
@@ -130,13 +163,18 @@ export default function Pricing() {
               <div className="text-sm mt-1 text-[#8A3B00] font-bold" data-testid="cancel-status">
                 Cancelled · you keep access until {billing.expires_at ? new Date(billing.expires_at).toLocaleDateString() : "the period ends"}.
               </div>
+            ) : billing.next_tier ? (
+              <div className="text-sm mt-1 text-[#8A3B00] font-bold" data-testid="downgrade-status">
+                Switching to <span className="uppercase">{PLAN_NAMES[billing.next_tier] || billing.next_tier}</span>
+                {billing.expires_at ? ` on ${new Date(billing.expires_at).toLocaleDateString()}` : " at period end"}.
+              </div>
             ) : billing.expires_at ? (
               <div className="text-sm mt-1 text-[#4A4A4A]" data-testid="renews-hint">
-                Runs until {new Date(billing.expires_at).toLocaleDateString()}. Cancel any time — you'll keep access until then.
+                Runs until {new Date(billing.expires_at).toLocaleDateString()}. Cancel or switch plans any time — you keep access until then.
               </div>
             ) : null}
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {billing.cancel_at_period_end ? (
               <button
                 onClick={resumeSubscription}
@@ -146,15 +184,37 @@ export default function Pricing() {
               >
                 <ArrowsClockwise size={14} weight="bold" /> {cancelBusy ? "Resuming…" : "Resume subscription"}
               </button>
-            ) : (
+            ) : billing.next_tier ? (
               <button
-                onClick={cancelSubscription}
-                disabled={cancelBusy}
-                data-testid="cancel-subscription-btn"
-                className="brutal-btn bg-white hover:bg-peach inline-flex items-center gap-2 disabled:opacity-60"
+                onClick={cancelDowngrade}
+                disabled={downgradeBusy === "cancel"}
+                data-testid="cancel-downgrade-btn"
+                className="brutal-btn bg-ink text-white inline-flex items-center gap-2 disabled:opacity-60"
               >
-                <Prohibit size={14} weight="bold" /> {cancelBusy ? "Cancelling…" : "Cancel subscription"}
+                <ArrowCounterClockwise size={14} weight="bold" /> {downgradeBusy === "cancel" ? "Undoing…" : "Undo scheduled change"}
               </button>
+            ) : (
+              <>
+                {PLAN_ORDER.slice(0, PLAN_ORDER.indexOf(billing.tier)).filter((t) => t !== "free").map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => scheduleDowngrade(t)}
+                    disabled={!!downgradeBusy}
+                    data-testid={`downgrade-to-${t}-btn`}
+                    className="brutal-btn bg-butter hover:bg-white inline-flex items-center gap-2 disabled:opacity-60"
+                  >
+                    <ArrowDown size={14} weight="bold" /> {downgradeBusy === t ? "Scheduling…" : `Downgrade to ${PLAN_NAMES[t]}`}
+                  </button>
+                ))}
+                <button
+                  onClick={cancelSubscription}
+                  disabled={cancelBusy}
+                  data-testid="cancel-subscription-btn"
+                  className="brutal-btn bg-white hover:bg-peach inline-flex items-center gap-2 disabled:opacity-60"
+                >
+                  <Prohibit size={14} weight="bold" /> {cancelBusy ? "Cancelling…" : "Cancel subscription"}
+                </button>
+              </>
             )}
           </div>
         </div>

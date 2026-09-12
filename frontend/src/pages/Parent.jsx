@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { Users, Plus, X, ClipboardText, Clock, ShieldWarning, CheckCircle } from "@phosphor-icons/react";
+import { Users, Plus, X, ClipboardText, Clock, ShieldWarning, CheckCircle, ChartLineUp, Trophy, GraduationCap } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const STATUS_LABEL = {
@@ -217,6 +217,64 @@ export default function Parent() {
                     </ul>
                   )}
                 </div>
+
+                <div className="grid sm:grid-cols-3 gap-3" data-testid="parent-progress-stats">
+                  <div className="brutal-card p-4 bg-butter">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]"><ChartLineUp size={14} weight="bold" /> Attendance</div>
+                    <div className="font-display font-black text-3xl mt-2" data-testid="parent-attendance-rate">
+                      {summary?.attendance?.rate != null ? `${Math.round(summary.attendance.rate)}%` : "—"}
+                    </div>
+                    <div className="text-xs text-[#4A4A4A] mt-1">
+                      {summary?.attendance?.present || 0} present · {summary?.attendance?.late || 0} late · {summary?.attendance?.absent || 0} absent
+                    </div>
+                  </div>
+                  <div className="brutal-card p-4 bg-mint">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]"><Trophy size={14} weight="bold" /> Behaviour points</div>
+                    <div className="font-display font-black text-3xl mt-2" data-testid="parent-behaviour-points">
+                      {summary?.achievements?.points ?? 0}
+                    </div>
+                    <div className="text-xs text-[#4A4A4A] mt-1">
+                      Across {summary?.achievements?.total || 0} awards
+                    </div>
+                  </div>
+                  <div className="brutal-card p-4 bg-lavender">
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]"><GraduationCap size={14} weight="bold" /> Subjects graded</div>
+                    <div className="font-display font-black text-3xl mt-2" data-testid="parent-grades-count">
+                      {summary?.grades?.length ?? 0}
+                    </div>
+                    <div className="text-xs text-[#4A4A4A] mt-1">Latest assessments below</div>
+                  </div>
+                </div>
+
+                {summary?.grades?.length > 0 && (
+                  <div className="brutal-card p-5 bg-white" data-testid="parent-grades-list">
+                    <h3 className="font-display font-bold text-lg mb-2 flex items-center gap-2"><GraduationCap size={16} /> Recent grades</h3>
+                    <ul className="text-sm divide-y divide-ink/10">
+                      {summary.grades.slice(0, 8).map((g, i) => (
+                        <li key={g.submission_id || i} className="flex items-center justify-between py-1.5">
+                          <span className="truncate mr-2">{g.title || g.subject || "Assessment"}</span>
+                          <span className="font-mono text-xs px-2 py-0.5 border-2 border-ink rounded-md bg-butter whitespace-nowrap">
+                            {g.grade || (g.score != null ? `${g.score}${g.max_score ? "/" + g.max_score : ""}` : "—")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {summary?.achievements?.items?.length > 0 && (
+                  <div className="brutal-card p-5 bg-mint" data-testid="parent-achievements-list">
+                    <h3 className="font-display font-bold text-lg mb-2 flex items-center gap-2"><Trophy size={16} /> Recent behaviour</h3>
+                    <ul className="text-sm space-y-1">
+                      {summary.achievements.items.slice(0, 6).map((a, i) => (
+                        <li key={a.achievement_id || i}>
+                          {a.reason || a.type || "Award"} · <span className="font-mono text-[#4A4A4A]">+{a.points || 0}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
                 <div className="brutal-card p-5 bg-peach">
                   <h3 className="font-display font-bold text-lg mb-2 flex items-center gap-2"><ShieldWarning size={16} /> Detentions</h3>
                   {(!summary?.detentions || summary.detentions.length === 0) ? <div className="text-sm text-[#4A4A4A]">None on record.</div> : (

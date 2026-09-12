@@ -138,14 +138,36 @@ export default function DPA() {
             </section>
 
             <div className="space-y-6" data-testid="dpa-sections">
-              {doc.sections.map((s, idx) => (
+              {doc.sections.map((s) => (
                 <section key={s.heading} className="brutal-card p-6 bg-white">
-                  <h3 className="font-display font-bold text-lg">
-                    {idx + 1}. {s.heading}
-                  </h3>
+                  <h3 className="font-display font-bold text-lg">{s.heading}</h3>
                   <p className="text-sm text-[#333] mt-2 leading-relaxed whitespace-pre-line">
                     {s.body}
                   </p>
+                  {s.heading.startsWith("11.") && doc.retention_table && (
+                    <div className="mt-4 overflow-x-auto" data-testid="dpa-retention-table">
+                      <table className="min-w-full border-2 border-ink text-sm">
+                        <thead className="bg-butter border-b-2 border-ink">
+                          <tr>
+                            {doc.retention_table.columns.map((c) => (
+                              <th key={c} className="text-left p-3 font-display border-r-2 border-ink last:border-r-0">{c}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {doc.retention_table.rows.map((row, i) => (
+                            <tr key={i} className="border-b border-ink/20 last:border-b-0">
+                              {row.map((cell, j) => (
+                                <td key={j} className="align-top p-3 border-r-2 border-ink/40 last:border-r-0 text-[#333]">
+                                  {j === 0 ? <strong>{cell}</strong> : cell}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </section>
               ))}
             </div>

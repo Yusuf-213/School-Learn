@@ -166,6 +166,28 @@ export default function Help() {
     setInput("");
   };
 
+  const confirmUnderstood = async () => {
+    if (loading || !sessionId) return;
+    const text = "I understand — please move to the next step.";
+    setMessages((m) => [...m, { role: "user", text }]);
+    setLoading(true);
+    try {
+      const { data } = await api.post("/ai/help", {
+        problem,
+        message: text,
+        grade_level: gradeLevel,
+        subject: subject || null,
+        session_id: sessionId,
+      });
+      setMessages((m) => [...m, { role: "assistant", text: data.response }]);
+    } catch (ex) {
+      const msg = ex.response?.data?.detail || "Something went wrong";
+      toast.error(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const inSession = messages.length > 0;
 
   return (
@@ -284,6 +306,10 @@ export default function Help() {
                 const parsed = m.role === "assistant" ? parseConfidence(m.text) : { text: m.text, confidence: null };
                 const conf = parsed.confidence;
                 const cStyle = conf !== null ? confidenceStyle(conf) : null;
+                const rawText = parsed.text || m.text;
+                const hasConfirm = m.role === "assistant" && /\[\[CONFIRM_STEP\]\]/i.test(rawText);
+                const displayText = hasConfirm ? rawText.replace(/\[\[CONFIRM_STEP\]\]/gi, "").trim() : rawText;
+                const isLast = i === messages.length - 1;
                 return (
                   <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                     <div className={`max-w-[88%] border-2 border-ink rounded-md p-3 ${m.role === "user" ? "bg-ink text-white" : "bg-butter"}`}>
@@ -308,7 +334,16 @@ export default function Help() {
                           ))}
                         </div>
                       )}
-                      <div className="whitespace-pre-wrap text-sm leading-relaxed">{parsed.text || m.text}</div>
+                      <div className="whitespace-pre-wrap text-sm leading-relaxed">{displayText}</div>
+                      {hasConfirm && isLast && !loading && (
+                        <button
+                          onClick={() => confirmUnderstood()}
+                          data-testid="help-confirm-step-btn"
+                          className="mt-3 brutal-btn bg-mint hover:bg-white inline-flex items-center gap-2 text-sm w-full justify-center"
+                        >
+                          <Sparkle size={14} weight="bold" /> I understand — next step
+                        </button>
+                      )}
                     </div>
                   </div>
                 );

@@ -142,50 +142,104 @@ function LessonsTab() {
 function LessonPlanView({ lesson }) {
   const p = lesson.plan || {};
   const [dl, setDl] = useState(false);
+  const [refineOpen, setRefineOpen] = useState(false);
+  const [refinePrompt, setRefinePrompt] = useState("");
+  const [refining, setRefining] = useState(false);
+  const [current, setCurrent] = useState(lesson);
+  useEffect(() => { setCurrent(lesson); }, [lesson.lesson_id]);
+  const cp = current.plan || p;
   const makePptx = async () => {
     setDl(true);
     try {
-      const res = await api.get(`/teacher/lessons/${lesson.lesson_id}/pptx`, { responseType: "blob" });
+      const res = await api.get(`/teacher/lessons/${current.lesson_id}/pptx`, { responseType: "blob" });
       const url = window.URL.createObjectURL(new Blob([res.data], { type: "application/vnd.openxmlformats-officedocument.presentationml.presentation" }));
       const a = document.createElement("a");
       const cd = res.headers["content-disposition"] || "";
       const m = cd.match(/filename="?([^"]+)"?/);
-      a.href = url; a.download = m?.[1] || `${(lesson.title || "lesson").replace(/\s+/g, "-")}.pptx`;
+      a.href = url; a.download = m?.[1] || `${(current.title || "lesson").replace(/\s+/g, "-")}.pptx`;
       document.body.appendChild(a); a.click(); a.remove();
       window.URL.revokeObjectURL(url);
     } catch (e) {
       alert(e?.response?.data?.detail || "Could not generate PowerPoint");
     } finally { setDl(false); }
   };
+  const refine = async (e) => {
+    e.preventDefault();
+    if (!refinePrompt.trim()) { toast.error("Say what to change."); return; }
+    setRefining(true);
+    try {
+      const { data } = await api.post(`/teacher/lessons/${current.lesson_id}/refine`, { edit_prompt: refinePrompt });
+      setCurrent(data);
+      setRefinePrompt("");
+      setRefineOpen(false);
+      toast.success("Lesson updated.");
+    } catch (ex) {
+      toast.error(ex.response?.data?.detail || "Refine failed");
+    } finally {
+      setRefining(false);
+    }
+  };
   return (
     <div className="brutal-card p-6 bg-white" data-testid="lesson-plan-view">
       <div className="flex flex-wrap justify-between items-start gap-3">
-        <h3 className="font-display font-extrabold text-2xl">{p.title || lesson.title}</h3>
-        <button
-          onClick={makePptx}
-          disabled={dl}
-          className="brutal-btn bg-mint hover:bg-white inline-flex items-center gap-2 disabled:opacity-60"
-          data-testid="lesson-make-pptx"
-        >
-          {dl ? "Building…" : "Make PowerPoint"}
-        </button>
+        <h3 className="font-display font-extrabold text-2xl">{cp.title || current.title}</h3>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setRefineOpen((v) => !v)}
+            className="brutal-btn bg-butter hover:bg-white inline-flex items-center gap-2"
+            data-testid="lesson-refine-toggle"
+          >
+            <Sparkle size={16} weight="bold" /> {refineOpen ? "Close" : "Edit with AI"}
+          </button>
+          <button
+            onClick={makePptx}
+            disabled={dl}
+            className="brutal-btn bg-mint hover:bg-white inline-flex items-center gap-2 disabled:opacity-60"
+            data-testid="lesson-make-pptx"
+          >
+            {dl ? "Building…" : "Make PowerPoint"}
+          </button>
+        </div>
       </div>
-      {p.objectives?.length > 0 && (
+      {refineOpen && (
+        <form onSubmit={refine} className="mt-3 brutal-card p-3 bg-butter space-y-2" data-testid="lesson-refine-form">
+          <label className="block">
+            <span className="text-xs uppercase tracking-[0.2em] font-bold">Tell the AI how to edit this lesson</span>
+            <textarea
+              rows={2}
+              value={refinePrompt}
+              onChange={(e) => setRefinePrompt(e.target.value)}
+              placeholder="e.g. Add a mini-plenary halfway through, and swap the starter for a Do-Now recall of prior learning."
+              className="mt-2 brutal-input w-full text-sm"
+              data-testid="lesson-refine-input"
+              disabled={refining}
+            />
+          </label>
+          <div className="flex gap-2">
+            <button type="submit" disabled={refining} data-testid="lesson-refine-submit"
+              className="brutal-btn bg-ink text-white flex-1 inline-flex items-center justify-center gap-2 disabled:opacity-60">
+              <ArrowsClockwise size={16} weight="bold" className={refining ? "animate-spin" : ""} />
+              {refining ? "Refining…" : "Apply edit"}
+            </button>
+          </div>
+        </form>
+      )}
+      {cp.objectives?.length > 0 && (
         <div className="mt-3">
           <div className="text-xs uppercase tracking-[0.2em] font-bold">Learning objectives</div>
           <ul className="list-disc pl-5 mt-1 text-sm space-y-1">
-            {p.objectives.map((o, i) => <li key={i}>{o}</li>)}
+            {cp.objectives.map((o, i) => <li key={i}>{o}</li>)}
           </ul>
         </div>
       )}
-      {p.starter && (
-        <Section title="Starter" duration={p.starter.duration_min}>{p.starter.activity}</Section>
+      {cp.starter && (
+        <Section title="Starter" duration={cp.starter.duration_min}>{cp.starter.activity}</Section>
       )}
-      {p.main?.length > 0 && (
+      {cp.main?.length > 0 && (
         <div className="mt-4">
           <div className="text-xs uppercase tracking-[0.2em] font-bold">Main</div>
           <div className="space-y-3 mt-2">
-            {p.main.map((m, i) => (
+            {cp.main.map((m, i) => (
               <div key={i} className="border-2 border-ink rounded-md p-3 bg-butter">
                 <div className="text-xs font-bold mb-1">Activity {i + 1} · {m.duration_min} min</div>
                 <div className="text-sm">{m.activity}</div>
@@ -195,31 +249,31 @@ function LessonPlanView({ lesson }) {
           </div>
         </div>
       )}
-      {p.plenary && (
-        <Section title="Plenary" duration={p.plenary.duration_min}>{p.plenary.activity}</Section>
+      {cp.plenary && (
+        <Section title="Plenary" duration={cp.plenary.duration_min}>{cp.plenary.activity}</Section>
       )}
-      {p.differentiation && (
+      {cp.differentiation && (
         <div className="mt-4 grid sm:grid-cols-2 gap-3">
           <div className="border-2 border-ink rounded-md p-3 bg-mint">
             <div className="text-xs uppercase tracking-[0.2em] font-bold">Support</div>
-            <div className="text-sm mt-1">{p.differentiation.support}</div>
+            <div className="text-sm mt-1">{cp.differentiation.support}</div>
           </div>
           <div className="border-2 border-ink rounded-md p-3 bg-lavender">
             <div className="text-xs uppercase tracking-[0.2em] font-bold">Stretch</div>
-            <div className="text-sm mt-1">{p.differentiation.stretch}</div>
+            <div className="text-sm mt-1">{cp.differentiation.stretch}</div>
           </div>
         </div>
       )}
-      {p.success_criteria?.length > 0 && (
+      {cp.success_criteria?.length > 0 && (
         <div className="mt-4">
           <div className="text-xs uppercase tracking-[0.2em] font-bold">Success criteria</div>
           <ul className="list-disc pl-5 mt-1 text-sm space-y-1">
-            {p.success_criteria.map((s, i) => <li key={i}>{s}</li>)}
+            {cp.success_criteria.map((s, i) => <li key={i}>{s}</li>)}
           </ul>
         </div>
       )}
-      {p.homework && (
-        <Section title="Homework">{p.homework}</Section>
+      {cp.homework && (
+        <Section title="Homework">{cp.homework}</Section>
       )}
     </div>
   );
@@ -237,9 +291,10 @@ function Section({ title, duration, children }) {
 function HomeworkTab() {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ title: "", subject: "Mathematics", class_id: "", instructions: "", max_score: 100 });
+  const [form, setForm] = useState({ title: "", subject: "Mathematics", class_id: "", instructions: "", max_score: 100, is_assignment: false, due_date: "" });
   const [analysis, setAnalysis] = useState(null);
   const [analyzingId, setAnalyzingId] = useState(null);
+  const [toggling, setToggling] = useState(null);
 
   const load = async () => {
     try { const { data } = await api.get("/teacher/homework"); setItems(data.items); } catch {}
@@ -249,13 +304,30 @@ function HomeworkTab() {
   const create = async (e) => {
     e.preventDefault();
     try {
-      const { data } = await api.post("/teacher/homework", form);
+      const payload = { ...form };
+      if (!payload.due_date) delete payload.due_date;
+      const { data } = await api.post("/teacher/homework", payload);
       setItems((it) => [data, ...it]);
       setOpen(false);
-      setForm({ title: "", subject: "Mathematics", class_id: "", instructions: "", max_score: 100 });
-      toast.success("Homework set.");
+      setForm({ title: "", subject: "Mathematics", class_id: "", instructions: "", max_score: 100, is_assignment: false, due_date: "" });
+      toast.success(data.is_assignment ? "Assignment set." : "Homework set.");
     } catch (ex) {
       toast.error(ex.response?.data?.detail || "Failed");
+    }
+  };
+
+  const toggleAssignment = async (h) => {
+    setToggling(h.homework_id);
+    try {
+      const { data } = await api.post(`/teacher/homework/${h.homework_id}/assignment`, {
+        is_assignment: !h.is_assignment,
+      });
+      setItems((it) => it.map((x) => x.homework_id === h.homework_id ? data : x));
+      toast.success(data.is_assignment ? "Promoted to graded assignment." : "Reverted to homework.");
+    } catch (ex) {
+      toast.error(ex.response?.data?.detail || "Failed");
+    } finally {
+      setToggling(null);
     }
   };
 
@@ -307,9 +379,26 @@ function HomeworkTab() {
             <span className="text-xs uppercase tracking-[0.2em] font-bold">Instructions / questions</span>
             <textarea data-testid="hw-instructions-input" required rows={4} value={form.instructions} onChange={(e) => setForm({ ...form, instructions: e.target.value })} className="mt-2 brutal-input w-full font-mono text-sm" />
           </label>
+          <div className="grid sm:grid-cols-2 gap-3 items-end">
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.2em] font-bold">Due date (optional)</span>
+              <input data-testid="hw-due-input" type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} className="mt-2 brutal-input w-full" />
+            </label>
+            <label className="flex items-start gap-2 border-2 border-ink rounded-md p-3 bg-white cursor-pointer" data-testid="hw-assignment-toggle">
+              <input type="checkbox" checked={form.is_assignment}
+                onChange={(e) => setForm({ ...form, is_assignment: e.target.checked })}
+                data-testid="hw-assignment-checkbox" className="mt-1" />
+              <span className="text-sm">
+                <strong>Set as graded assignment</strong>
+                <span className="block text-xs text-[#4A4A4A]">Counts toward term grade and shows on the student's record.</span>
+              </span>
+            </label>
+          </div>
           <div className="flex gap-2">
             <button type="button" onClick={() => setOpen(false)} className="brutal-btn bg-white">Cancel</button>
-            <button type="submit" data-testid="hw-create-btn" className="brutal-btn bg-ink text-white flex-1">Set homework</button>
+            <button type="submit" data-testid="hw-create-btn" className="brutal-btn bg-ink text-white flex-1">
+              {form.is_assignment ? "Set assignment" : "Set homework"}
+            </button>
           </div>
         </form>
       )}
@@ -319,14 +408,31 @@ function HomeworkTab() {
           <div key={h.homework_id} className="brutal-card p-4 bg-white" data-testid={`hw-row-${h.homework_id}`}>
             <div className="flex flex-wrap justify-between gap-3">
               <div>
-                <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">{h.subject} · {h.class_id}</div>
+                <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A] flex items-center gap-2">
+                  {h.subject} · {h.class_id}
+                  {h.is_assignment && (
+                    <span className="px-2 py-0.5 border-2 border-ink rounded-md bg-butter text-[10px] font-bold uppercase" data-testid={`hw-assignment-badge-${h.homework_id}`}>Assignment</span>
+                  )}
+                </div>
                 <div className="font-display font-bold text-lg">{h.title}</div>
-                <div className="text-xs text-[#4A4A4A] mt-1">Max {h.max_score} · {new Date(h.created_at).toLocaleDateString()}</div>
+                <div className="text-xs text-[#4A4A4A] mt-1">
+                  Max {h.max_score}{h.due_date ? ` · Due ${new Date(h.due_date).toLocaleDateString()}` : ""} · {new Date(h.created_at).toLocaleDateString()}
+                </div>
               </div>
-              <button onClick={() => analyze(h.homework_id)} disabled={analyzingId === h.homework_id} data-testid={`hw-analyze-${h.homework_id}`} className="brutal-btn bg-ink text-white inline-flex items-center gap-2 self-start">
-                {analyzingId === h.homework_id ? <ArrowsClockwise size={16} className="animate-spin" /> : <ChartBar size={16} weight="bold" />}
-                {analyzingId === h.homework_id ? "Analysing…" : "AI analysis"}
-              </button>
+              <div className="flex gap-2 self-start flex-wrap">
+                <button
+                  onClick={() => toggleAssignment(h)}
+                  disabled={toggling === h.homework_id}
+                  data-testid={`hw-toggle-assignment-${h.homework_id}`}
+                  className={`brutal-btn inline-flex items-center gap-2 text-sm ${h.is_assignment ? "bg-white hover:bg-peach" : "bg-butter hover:bg-white"}`}
+                >
+                  {toggling === h.homework_id ? "…" : (h.is_assignment ? "Revert to homework" : "Promote to assignment")}
+                </button>
+                <button onClick={() => analyze(h.homework_id)} disabled={analyzingId === h.homework_id} data-testid={`hw-analyze-${h.homework_id}`} className="brutal-btn bg-ink text-white inline-flex items-center gap-2">
+                  {analyzingId === h.homework_id ? <ArrowsClockwise size={16} className="animate-spin" /> : <ChartBar size={16} weight="bold" />}
+                  {analyzingId === h.homework_id ? "Analysing…" : "AI analysis"}
+                </button>
+              </div>
             </div>
             {analysis?.id === h.homework_id && analysis.analysis && (
               <div className="mt-4 border-t-2 border-ink pt-4 space-y-3" data-testid={`hw-analysis-${h.homework_id}`}>

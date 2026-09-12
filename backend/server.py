@@ -724,6 +724,8 @@ async def billing_me(current=Depends(get_current_user)):
         "cancel_at_period_end": bool(current.get("cancel_at_period_end")),
         "canceled_at": current.get("canceled_at"),
         "lifetime": bool(current.get("subscription_lifetime")),
+        "next_tier": current.get("subscription_tier_next"),
+        "downgrade_scheduled_at": current.get("downgrade_scheduled_at"),
     }
 
 @api_router.post("/billing/cancel")
@@ -761,6 +763,75 @@ async def billing_resume(current=Depends(get_current_user)):
         {"$set": {"cancel_at_period_end": False}, "$unset": {"canceled_at": ""}},
     )
     return {"ok": True, "cancel_at_period_end": False, "expires_at": expires}
+
+
+# ====================== Scheduled downgrade (Pro → Standard/Basic mid-cycle) ======================
+# Rules:
+#   • Only individual paid plans participate: free < basic < standard < pro.
+#   • Downgrade takes effect at subscription_expires_at — user keeps full paid access until then.
+#   • Downgrading to "free" is equivalent to /billing/cancel.
+#   • Upgrading (higher tier) uses the normal /billing/checkout flow (immediate).
+
+_INDIVIDUAL_PLAN_ORDER = ["free", "basic", "standard", "pro"]
+
+
+class ScheduleDowngradeRequest(BaseModel):
+    new_plan_id: Literal["free", "basic", "standard"]
+
+
+@api_router.post("/billing/schedule-downgrade")
+async def billing_schedule_downgrade(req: ScheduleDowngradeRequest, current=Depends(get_current_user)):
+    tier = current.get("subscription_tier") or "free"
+    if tier not in _INDIVIDUAL_PLAN_ORDER:
+        raise HTTPException(status_code=400, detail="Downgrades are only available on individual plans.")
+    if current.get("subscription_lifetime"):
+        raise HTTPException(status_code=400, detail="Lifetime plans can't be downgraded here — please contact support.")
+    try:
+        cur_rank = _INDIVIDUAL_PLAN_ORDER.index(tier)
+        new_rank = _INDIVIDUAL_PLAN_ORDER.index(req.new_plan_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Unknown plan.")
+    if new_rank >= cur_rank:
+        raise HTTPException(status_code=400, detail="Pick a plan cheaper than your current one — for upgrades use Subscribe on the pricing page.")
+    if req.new_plan_id == "free":
+        # Just schedule a cancellation.
+        if current.get("cancel_at_period_end"):
+            raise HTTPException(status_code=400, detail="Your subscription is already scheduled to end.")
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.users.update_one(
+            {"user_id": current["user_id"]},
+            {"$set": {
+                "cancel_at_period_end": True, "canceled_at": now_iso,
+                "subscription_tier_next": "free", "downgrade_scheduled_at": now_iso,
+            }},
+        )
+        return {"ok": True, "next_tier": "free", "takes_effect_at": current.get("subscription_expires_at")}
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"user_id": current["user_id"]},
+        {"$set": {
+            "subscription_tier_next": req.new_plan_id,
+            "downgrade_scheduled_at": now_iso,
+        }, "$unset": {"cancel_at_period_end": ""}},
+    )
+    return {
+        "ok": True,
+        "next_tier": req.new_plan_id,
+        "takes_effect_at": current.get("subscription_expires_at"),
+    }
+
+
+@api_router.post("/billing/cancel-downgrade")
+async def billing_cancel_downgrade(current=Depends(get_current_user)):
+    if not current.get("subscription_tier_next") and not current.get("cancel_at_period_end"):
+        raise HTTPException(status_code=400, detail="Nothing scheduled to change.")
+    await db.users.update_one(
+        {"user_id": current["user_id"]},
+        {"$set": {"cancel_at_period_end": False},
+         "$unset": {"subscription_tier_next": "", "downgrade_scheduled_at": "", "canceled_at": ""}},
+    )
+    return {"ok": True}
+
 
 @api_router.post("/ai/generate")
 async def ai_generate(req: AIGenerateRequest, current=Depends(get_current_user)):
@@ -962,21 +1033,35 @@ async def ai_help(req: HomeworkHelpRequest, current=Depends(get_current_user)):
     level = _grade_descriptor(req.grade_level)
     subject_line = f"Likely subject: {req.subject}.\n" if req.subject else ""
     system = (
-        "You are ScholarHub Homework Helper, a Socratic tutor for students.\n"
+        "You are Learnify Homework Helper, a patient Socratic tutor for UK students.\n"
+        "\n"
+        "MEMORY: You already have the problem and every prior turn of this chat in your context. "
+        "NEVER ask the student to restate the question. NEVER say 'please share the question again'. "
+        "Refer to the problem by short label ('the equation', 'question 2', 'the passage') and keep going.\n"
+        "\n"
         "ABSOLUTE RULES:\n"
-        "1. NEVER just give the final answer on the first turn.\n"
-        "2. On the FIRST turn, restate the problem in your own words, then ask the student "
-        "exactly one concise diagnostic question: WHAT part don't they understand "
-        "(e.g., reading the question, a specific step, the underlying concept, vocabulary)?\n"
-        "3. After they tell you, explain ONLY the part they're stuck on, step-by-step, "
-        "with a tiny example. Then prompt them to try the next step themselves.\n"
-        "4. Calibrate language for: " + level + ".\n"
-        "5. Use markdown. Keep each reply under 180 words.\n"
-        "6. Never lecture for more than one concept at a time. Encourage effort.\n"
-        "7. On the VERY LAST line of every reply, print exactly `Confidence: NN%` (nothing after) "
-        "where NN is your honest self-assessed certainty in the maths / facts you're relying on "
-        "(0-100, round to nearest 5). Crisp textbook facts → 95-100%; nuanced → 70-90%; edge cases "
-        "or partial info → 40-65%; guessing → below 40%.\n"
+        "1. NEVER just hand over the final answer. If the student writes anything like 'just give me "
+        "the answer', 'tell me the answer', 'stop teaching', 'skip', 'i give up', or similar — do NOT "
+        "surrender the answer. Instead switch to STEP MODE: reveal ONE small step at a time.\n"
+        "2. STEP MODE format (use whenever the student asks for the answer, OR when you have "
+        "identified what they're stuck on):\n"
+        "   • Heading: `Step N of M — <short label>` (you choose reasonable M, usually 3-6).\n"
+        "   • One tiny explanation (max ~60 words) with a worked mini-example.\n"
+        "   • End with a single line reading exactly: `[[CONFIRM_STEP]]` on its own — a marker the UI "
+        "will render as an 'I understand' button. Do NOT progress to Step N+1 in the same reply.\n"
+        "3. On the FIRST turn (student sends the problem, no prior assistant reply), briefly restate "
+        "the problem in your own words in ONE sentence, then ask exactly ONE concise diagnostic "
+        "question — WHAT part are they stuck on (reading it, a specific step, the concept, vocabulary). "
+        "Do NOT emit [[CONFIRM_STEP]] on turn 1.\n"
+        "4. When the student replies 'I understand' or clicks confirm, advance to the NEXT step. "
+        "When you reach the last step, invite them to write the final answer themselves and offer "
+        "to check it — still don't dump the answer.\n"
+        "5. Calibrate language for: " + level + ".\n"
+        "6. Use markdown. Keep each reply under 180 words.\n"
+        "7. Never teach more than one concept at a time. Encourage effort warmly.\n"
+        "8. On the VERY LAST line of every reply, print exactly `Confidence: NN%` (nothing after) "
+        "where NN is your honest self-assessed certainty (0-100, round to nearest 5). "
+        "The [[CONFIRM_STEP]] marker (if present) goes BEFORE the Confidence line.\n"
         + subject_line
     )
 
@@ -1406,6 +1491,17 @@ class HomeworkCreate(BaseModel):
     instructions: str
     due_date: Optional[str] = None
     max_score: int = 100
+    is_assignment: bool = False
+
+
+class AssignmentToggle(BaseModel):
+    is_assignment: bool = True
+    due_date: Optional[str] = None
+    weight: Optional[float] = None  # 0-1 contribution to term grade
+
+
+class LessonRefine(BaseModel):
+    edit_prompt: str
 
 class HomeworkSubmit(BaseModel):
     homework_id: str
@@ -1908,6 +2004,57 @@ async def edit_lesson(lesson_id: str, req: LessonEdit, current=Depends(require_a
     return await db.lessons.find_one({"lesson_id": lesson_id}, {"_id": 0})
 
 
+@api_router.post("/teacher/lessons/{lesson_id}/refine")
+async def refine_lesson(lesson_id: str, req: LessonRefine, current=Depends(require_authed_role(ROLE_TEACHER))):
+    """Ask the AI to edit an existing lesson plan using a natural-language prompt.
+    The previous plan is archived and the new one takes its place."""
+    row = await db.lessons.find_one({"lesson_id": lesson_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    if not is_owner(current) and row.get("teacher_user_id") != current["user_id"]:
+        raise HTTPException(status_code=403, detail="Not your lesson")
+    edit_prompt = (req.edit_prompt or "").strip()
+    if len(edit_prompt) < 4:
+        raise HTTPException(status_code=400, detail="Give the AI a clearer edit instruction (min 4 chars).")
+    mod = await moderate_text(edit_prompt, "lesson_refine", current)
+    if mod["action"] == "block":
+        raise HTTPException(status_code=400, detail="That content can't be processed.")
+    existing_plan = row.get("plan") or {}
+    system = (
+        f"You are Learnify Lesson Planner — an expert UK teacher refining a "
+        f"{row.get('duration_minutes', 60)}-minute lesson on {row.get('subject', 'this subject')}. "
+        f"Calibrate for {_grade_descriptor(row.get('year_group') or 'uk_y10')}. "
+        "Apply the teacher's edit exactly. Preserve the existing structure and keep every field."
+    )
+    user_text = (
+        f"Existing plan JSON:\n{json.dumps(existing_plan, ensure_ascii=False)}\n\n"
+        f"Teacher's edit request: {edit_prompt}\n\n"
+        f"Return the FULL refined plan as STRICT JSON with the exact same top-level keys as before "
+        f"(title, objectives, starter, main, plenary, differentiation, homework, success_criteria). "
+        f"No prose outside JSON."
+    )
+    try:
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"refine_{lesson_id}_{uuid.uuid4().hex[:6]}", system_message=system).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        response = await chat.send_message(UserMessage(text=user_text))
+        new_plan = extract_json(response)
+    except Exception as e:
+        logging.exception("lesson refine failed")
+        raise HTTPException(status_code=500, detail=f"AI refine failed: {e}")
+    await db.lessons.update_one(
+        {"lesson_id": lesson_id},
+        {"$set": {
+            "plan": new_plan,
+            "last_refine_prompt": edit_prompt,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }, "$push": {"revisions": {
+            "at": datetime.now(timezone.utc).isoformat(),
+            "prompt": edit_prompt,
+            "plan": existing_plan,
+        }}},
+    )
+    return await db.lessons.find_one({"lesson_id": lesson_id}, {"_id": 0})
+
+
 def _require_lesson_read(current: dict, row: dict):
     if is_owner(current):
         return
@@ -1920,11 +2067,14 @@ def _require_lesson_read(current: dict, row: dict):
 
 @api_router.get("/teacher/lessons/{lesson_id}/pptx")
 async def lesson_pptx(lesson_id: str, current=Depends(get_current_user)):
-    """Turn any lesson plan into an editable PowerPoint that the teacher can keep tweaking."""
+    """Turn any lesson plan into an editable PowerPoint that the teacher can keep tweaking.
+    Designed with a coloured cover, banded section slides, and speaker notes on every slide."""
     from io import BytesIO
     from fastapi.responses import StreamingResponse
     from pptx import Presentation
-    from pptx.util import Inches, Pt
+    from pptx.util import Inches, Pt, Emu
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
 
     row = await db.lessons.find_one({"lesson_id": lesson_id}, {"_id": 0})
     if not row:
@@ -1936,60 +2086,137 @@ async def lesson_pptx(lesson_id: str, current=Depends(get_current_user)):
     prs.slide_width = Inches(13.333)
     prs.slide_height = Inches(7.5)
 
-    def add_slide(title: str, bullets: List[str] = None, notes: str = ""):
-        blank = prs.slide_layouts[5]
+    # Designer palette — high-contrast, print-safe, avoids the tired "purple gradient on white".
+    PALETTE = {
+        "ink":       RGBColor(0x1A, 0x1A, 0x1A),
+        "paper":     RGBColor(0xFA, 0xF5, 0xEB),
+        "mint":      RGBColor(0xB6, 0xE8, 0xC7),
+        "butter":    RGBColor(0xFF, 0xE7, 0x91),
+        "peach":     RGBColor(0xFF, 0xB8, 0x9C),
+        "lavender":  RGBColor(0xD3, 0xC2, 0xF5),
+        "sky":       RGBColor(0xAD, 0xD8, 0xE6),
+        "white":     RGBColor(0xFF, 0xFF, 0xFF),
+    }
+
+    def _fill(shape, color):
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = color
+        shape.line.color.rgb = PALETTE["ink"]
+        shape.line.width = Pt(2)
+
+    def _text(tf, s, size=22, bold=False, color=None):
+        p = tf.paragraphs[0] if not tf.text else tf.add_paragraph()
+        p.text = s
+        for r in p.runs:
+            r.font.size = Pt(size)
+            r.font.bold = bold
+            r.font.name = "Verdana"
+            if color is not None:
+                r.font.color.rgb = color
+        return p
+
+    def add_section(title: str, bullets=None, notes: str = "", accent="mint", kicker: str = ""):
+        blank = prs.slide_layouts[6]  # fully blank layout — we own every element
         s = prs.slides.add_slide(blank)
-        title_shape = s.shapes.title
-        title_shape.text = title
-        for p in title_shape.text_frame.paragraphs:
-            for r in p.runs:
-                r.font.size = Pt(36)
-                r.font.bold = True
+
+        # Full-bleed paper background
+        bg = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
+        _fill(bg, PALETTE["paper"])
+        bg.line.width = Pt(0)
+
+        # Accent band on the left (designer touch)
+        band = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(0.6), prs.slide_height)
+        _fill(band, PALETTE[accent])
+        band.line.width = Pt(0)
+
+        # Kicker (small uppercase label above title)
+        if kicker:
+            kk = s.shapes.add_textbox(Inches(1.0), Inches(0.4), Inches(11), Inches(0.5))
+            _text(kk.text_frame, kicker.upper(), size=14, bold=True, color=PALETTE["ink"])
+
+        # Title in a bold card
+        title_box = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.0), Inches(0.9), Inches(11.3), Inches(1.1))
+        _fill(title_box, PALETTE["white"])
+        tf = title_box.text_frame
+        tf.margin_left = Inches(0.3); tf.margin_top = Inches(0.15)
+        _text(tf, title, size=36, bold=True, color=PALETTE["ink"])
+
+        # Bullets card
         if bullets:
-            box = s.shapes.add_textbox(Inches(0.6), Inches(1.6), Inches(12), Inches(5.5))
-            tf = box.text_frame
-            tf.word_wrap = True
+            box = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.0), Inches(2.2), Inches(11.3), Inches(4.9))
+            _fill(box, PALETTE["white"])
+            btf = box.text_frame
+            btf.word_wrap = True
+            btf.margin_left = Inches(0.35); btf.margin_top = Inches(0.25); btf.margin_right = Inches(0.35)
             for i, b in enumerate(bullets):
-                para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-                para.text = b
-                para.level = 0
-                for r in para.runs:
+                text = (b or "").strip()
+                if not text:
+                    continue
+                p = btf.paragraphs[0] if i == 0 else btf.add_paragraph()
+                p.text = f"•  {text}"
+                for r in p.runs:
                     r.font.size = Pt(22)
+                    r.font.name = "Verdana"
+                    r.font.color.rgb = PALETTE["ink"]
+
+        # Footer with Learnify wordmark placeholder
+        foot = s.shapes.add_textbox(Inches(1.0), Inches(7.0), Inches(11.3), Inches(0.4))
+        _text(foot.text_frame, f"Learnify · {row.get('subject','')} · {row.get('year_group','')}",
+              size=10, color=PALETTE["ink"])
+
         if notes:
             s.notes_slide.notes_text_frame.text = notes
 
-    # Title slide
-    add_slide(plan.get("title") or row.get("title") or "Lesson", [
-        row.get("subject", ""),
-        row.get("year_group", ""),
-        f"{row.get('duration_minutes', 0)} minutes",
-        f"Teacher: {current.get('name', '')}",
-    ])
-    # Objectives
+    # ---- Cover slide (designer) ----
+    cover = prs.slides.add_slide(prs.slide_layouts[6])
+    bg = cover.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, prs.slide_width, prs.slide_height)
+    _fill(bg, PALETTE["ink"]); bg.line.width = Pt(0)
+    # Big accent block
+    blk = cover.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, Inches(4.7), Inches(13.333), Inches(2.8))
+    _fill(blk, PALETTE["butter"]); blk.line.width = Pt(0)
+    # Kicker
+    kick = cover.shapes.add_textbox(Inches(0.9), Inches(0.7), Inches(11.5), Inches(0.6))
+    _text(kick.text_frame, "LEARNIFY · LESSON PLAN", size=16, bold=True, color=PALETTE["mint"])
+    # Title
+    ttl = cover.shapes.add_textbox(Inches(0.9), Inches(1.4), Inches(11.5), Inches(2.6))
+    _text(ttl.text_frame, plan.get("title") or row.get("title") or "Lesson", size=66, bold=True, color=PALETTE["white"])
+    # Meta band
+    meta = cover.shapes.add_textbox(Inches(0.9), Inches(5.0), Inches(11.5), Inches(2.2))
+    tf = meta.text_frame; tf.word_wrap = True
+    _text(tf, f"{row.get('subject','')} · {row.get('year_group','')} · {row.get('duration_minutes',0)} min",
+          size=22, bold=True, color=PALETTE["ink"])
+    _text(tf, f"Teacher: {current.get('name','')}", size=16, color=PALETTE["ink"])
     if plan.get("objectives"):
-        add_slide("Learning objectives", plan["objectives"])
-    # Starter
+        _text(tf, "Objectives: " + " · ".join(plan["objectives"][:2]), size=14, color=PALETTE["ink"])
+
+    # ---- Content slides ----
+    if plan.get("objectives"):
+        add_section("Learning objectives", plan["objectives"], accent="mint", kicker="What we'll learn")
     if plan.get("starter"):
         st = plan["starter"]
-        add_slide(f"Starter · {st.get('duration_min', 0)} min", [st.get("activity", "")])
-    # Main activities
+        add_section(f"Starter · {st.get('duration_min', 0)} min", [st.get("activity", "")],
+                    accent="butter", kicker="Warm-up",
+                    notes=f"Suggested pacing: {st.get('duration_min', 0)} minutes.")
     for i, m in enumerate(plan.get("main") or [], 1):
-        add_slide(f"Main activity {i} · {m.get('duration_min', 0)} min",
-                  [m.get("activity", ""), *(m.get("resources") or [])],
-                  notes=m.get("teacher_notes", ""))
-    # Plenary
+        bullets = [m.get("activity", "")]
+        for r in (m.get("resources") or []):
+            bullets.append(f"Resource: {r}")
+        add_section(f"Main activity {i} · {m.get('duration_min', 0)} min", bullets,
+                    accent="peach" if i % 2 else "sky", kicker=f"Main {i}",
+                    notes=m.get("teacher_notes", ""))
     if plan.get("plenary"):
         pl = plan["plenary"]
-        add_slide(f"Plenary · {pl.get('duration_min', 0)} min", [pl.get("activity", "")])
-    # Differentiation
+        add_section(f"Plenary · {pl.get('duration_min', 0)} min", [pl.get("activity", "")],
+                    accent="lavender", kicker="Wrap-up")
     diff = plan.get("differentiation") or {}
     if diff:
-        add_slide("Differentiation", [f"Support: {diff.get('support', '')}", f"Stretch: {diff.get('stretch', '')}"])
-    # Success + homework
+        add_section("Differentiation",
+                    [f"Support: {diff.get('support', '')}", f"Stretch: {diff.get('stretch', '')}"],
+                    accent="mint", kicker="Every learner")
     if plan.get("success_criteria"):
-        add_slide("Success criteria", plan["success_criteria"])
+        add_section("Success criteria", plan["success_criteria"], accent="butter", kicker="How we'll know")
     if plan.get("homework"):
-        add_slide("Homework", [plan["homework"]])
+        add_section("Homework", [plan["homework"]], accent="peach", kicker="Take home")
 
     buf = BytesIO()
     prs.save(buf)
@@ -2094,11 +2321,33 @@ async def create_homework(req: HomeworkCreate, current=Depends(require_authed_ro
         "instructions": req.instructions,
         "due_date": req.due_date,
         "max_score": req.max_score,
+        "is_assignment": bool(req.is_assignment),
+        "assignment_promoted_at": datetime.now(timezone.utc).isoformat() if req.is_assignment else None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.homework.insert_one(doc)
     doc.pop("_id", None)
     return doc
+
+
+@api_router.post("/teacher/homework/{homework_id}/assignment")
+async def toggle_homework_assignment(homework_id: str, req: AssignmentToggle, current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
+    """Promote a homework task to a graded assignment (or demote it). Assignments count toward
+    a student's term grade and are visible on their record."""
+    hw = await db.homework.find_one({"homework_id": homework_id})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if not is_owner(current) and hw.get("school_id") != current.get("school_id"):
+        raise HTTPException(status_code=403, detail="Not your school")
+    updates = {"is_assignment": bool(req.is_assignment)}
+    if req.is_assignment:
+        updates["assignment_promoted_at"] = datetime.now(timezone.utc).isoformat()
+    if req.due_date is not None:
+        updates["due_date"] = req.due_date
+    if req.weight is not None:
+        updates["weight"] = max(0.0, min(1.0, float(req.weight)))
+    await db.homework.update_one({"homework_id": homework_id}, {"$set": updates})
+    return await db.homework.find_one({"homework_id": homework_id}, {"_id": 0})
 
 @api_router.get("/teacher/homework")
 async def list_homework(current=Depends(require_authed_role(ROLE_TEACHER, ROLE_SCHOOL_ADMIN))):
@@ -2577,6 +2826,44 @@ def _link_public(link: dict) -> dict:
     return {k: v for k, v in link.items() if k not in {"_id"}}
 
 
+async def _notify(user_id: str, kind: str, title: str, body: str, url: Optional[str] = None, meta: Optional[dict] = None):
+    """Drop an in-app notification into `db.notifications` for a single user."""
+    if not user_id:
+        return
+    doc = {
+        "notification_id": f"ntf_{uuid.uuid4().hex[:10]}",
+        "user_id": user_id,
+        "kind": kind,
+        "title": title[:200],
+        "body": body[:600],
+        "url": url,
+        "meta": meta or {},
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.notifications.insert_one(doc)
+
+
+async def _audit_parent_link(link: dict, action: str, actor: dict, note: Optional[str] = None):
+    """Append an immutable audit row for every parent-link decision (created/approved/rejected)."""
+    await db.parent_link_audit.insert_one({
+        "audit_id": f"aud_{uuid.uuid4().hex[:12]}",
+        "link_id": link.get("link_id"),
+        "action": action,
+        "at": datetime.now(timezone.utc).isoformat(),
+        "actor_user_id": actor.get("user_id"),
+        "actor_email": actor.get("email"),
+        "actor_role": actor.get("role"),
+        "parent_user_id": link.get("parent_user_id"),
+        "parent_email": link.get("parent_email"),
+        "child_user_id": link.get("child_user_id"),
+        "child_email": link.get("child_email"),
+        "child_school_id": link.get("child_school_id"),
+        "relationship": link.get("relationship"),
+        "note": (note or "")[:500] or None,
+    })
+
+
 @api_router.post("/parent/link-requests")
 async def parent_create_link_request(req: ParentLinkChild, current=Depends(get_current_user)):
     if current.get("role") != ROLE_PARENT and not is_owner(current):
@@ -2617,6 +2904,31 @@ async def parent_create_link_request(req: ParentLinkChild, current=Depends(get_c
         {"$set": doc, "$unset": {"decided_at": "", "decided_by": "", "decided_by_role": "", "rejection_reason": ""}},
         upsert=True,
     )
+    await _audit_parent_link(doc, "created", current)
+    # Notify approvers
+    if status == "pending_school":
+        approvers = await db.users.find(
+            {"school_id": child_school_id, "role": {"$in": [ROLE_SCHOOL_ADMIN, ROLE_OWNER]}},
+            {"_id": 0, "user_id": 1},
+        ).to_list(50)
+        for a in approvers:
+            await _notify(
+                a["user_id"],
+                "parent_request",
+                "New guardian access request",
+                f"{current.get('name') or current['email']} is asking to see {child.get('name') or child_email}'s record. Please review and decide.",
+                url="/parent-requests",
+                meta={"link_id": link_id, "child_user_id": child["user_id"]},
+            )
+    else:
+        await _notify(
+            child["user_id"],
+            "parent_request",
+            "Is this your legal guardian?",
+            f"{current['email']} is asking to view your account. Sign in and answer Yes or No.",
+            url="/dashboard",
+            meta={"link_id": link_id, "parent_email": current["email"]},
+        )
     return {"link": doc, "already_requested": False}
 
 
@@ -2663,7 +2975,8 @@ async def unlink_child(req: ParentLinkChild, current=Depends(get_current_user)):
 
 @api_router.get("/parent/children/{child_user_id}/summary")
 async def parent_child_summary(child_user_id: str, current=Depends(get_current_user)):
-    """Homework + detentions for an APPROVED linked child. Parents only see linked+approved kids."""
+    """Full academic snapshot for an APPROVED linked child: homework, detentions, attendance,
+    achievements/behaviour points, and the latest assessment/progress rows."""
     if not is_owner(current):
         if current.get("role") != ROLE_PARENT:
             raise HTTPException(status_code=403, detail="Parent only")
@@ -2677,7 +2990,42 @@ async def parent_child_summary(child_user_id: str, current=Depends(get_current_u
             raise HTTPException(status_code=403, detail="Consent still pending — the school or student hasn't approved this link yet.")
     homework = await db.homework.find({"assigned_to": child_user_id}, {"_id": 0}).sort("due_at", -1).to_list(50)
     detentions = await db.detentions.find({"student_user_id": child_user_id}, {"_id": 0}).sort("issued_at", -1).to_list(50)
-    return {"homework": homework, "detentions": detentions}
+    # Attendance rollup
+    att_items = await db.attendance.find({"student_user_id": child_user_id}, {"_id": 0}).sort("date", -1).to_list(365)
+    att_total = len(att_items)
+    att_present = sum(1 for i in att_items if i.get("status") == "present")
+    att_late = sum(1 for i in att_items if i.get("status") == "late")
+    att_absent = sum(1 for i in att_items if i.get("status") == "absent")
+    attendance = {
+        "items": att_items[:30],
+        "total": att_total,
+        "present": att_present,
+        "late": att_late,
+        "absent": att_absent,
+        "rate": (att_present / att_total * 100) if att_total else None,
+    }
+    # Achievements (behaviour / merit points)
+    ach_items = await db.achievements.find({"student_user_id": child_user_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    achievements = {
+        "items": ach_items[:20],
+        "total": len(ach_items),
+        "points": sum(int(a.get("points", 0) or 0) for a in ach_items),
+    }
+    # Latest assessment/progress rows if any
+    grades = []
+    try:
+        grades = await db.assessment_submissions.find(
+            {"student_user_id": child_user_id}, {"_id": 0}
+        ).sort("submitted_at", -1).to_list(20)
+    except Exception:
+        grades = []
+    return {
+        "homework": homework,
+        "detentions": detentions,
+        "attendance": attendance,
+        "achievements": achievements,
+        "grades": grades,
+    }
 
 
 # --- SLT approval endpoints (school_admin / owner) ---
@@ -2722,6 +3070,19 @@ async def school_decide_parent_request(link_id: str, req: ParentDecisionRequest,
     if not req.approved and req.note:
         updates["rejection_reason"] = req.note[:500]
     await db.parent_links.update_one({"link_id": link_id}, {"$set": updates})
+    await _audit_parent_link({**link, **updates}, new_status, current, note=req.note)
+    # Notify parent of decision
+    await _notify(
+        link["parent_user_id"],
+        "parent_request_decision",
+        "Guardian request " + ("approved" if req.approved else "declined"),
+        (f"The school has approved your request to see {link.get('child_name') or link['child_email']}'s record."
+         if req.approved else
+         f"The school declined your request for {link.get('child_name') or link['child_email']}." +
+         (f" Reason: {req.note}" if req.note else "")),
+        url="/parent",
+        meta={"link_id": link_id, "approved": req.approved},
+    )
     return {"ok": True, "status": new_status}
 
 
@@ -2761,7 +3122,78 @@ async def student_decide_parent_request(link_id: str, req: ParentDecisionRequest
     if not req.approved and req.note:
         updates["rejection_reason"] = req.note[:500]
     await db.parent_links.update_one({"link_id": link_id}, {"$set": updates})
+    await _audit_parent_link({**link, **updates}, new_status, {**current, "role": "student_self_consent"}, note=req.note)
+    await _notify(
+        link["parent_user_id"],
+        "parent_request_decision",
+        "Guardian request " + ("approved" if req.approved else "declined"),
+        (f"{link.get('child_name') or link['child_email']} confirmed you as their guardian — you now have read-only access."
+         if req.approved else
+         f"{link.get('child_name') or link['child_email']} declined your guardian request."),
+        url="/parent",
+        meta={"link_id": link_id, "approved": req.approved},
+    )
     return {"ok": True, "status": new_status}
+
+
+# --- Guardian audit log (owner + school_admin) ---
+
+@api_router.get("/parent-link-audit")
+async def parent_link_audit(
+    q: Optional[str] = None,
+    action: Optional[str] = None,
+    limit: int = 200,
+    current=Depends(get_current_user),
+):
+    """Searchable audit trail of every parent-link decision. Owner sees all schools;
+    school_admin is auto-scoped to their own school."""
+    if current.get("role") not in {ROLE_OWNER, ROLE_SCHOOL_ADMIN}:
+        raise HTTPException(status_code=403, detail="Owner / school admin only")
+    query = {}
+    if not is_owner(current):
+        query["child_school_id"] = current.get("school_id")
+    if action:
+        query["action"] = action
+    if q:
+        qre = {"$regex": q.strip(), "$options": "i"}
+        query["$or"] = [
+            {"parent_email": qre}, {"child_email": qre},
+            {"actor_email": qre}, {"note": qre},
+        ]
+    rows = await db.parent_link_audit.find(query, {"_id": 0}).sort("at", -1).to_list(min(max(limit, 1), 1000))
+    return {"rows": rows, "count": len(rows)}
+
+
+# ====================== In-app notifications ======================
+
+@api_router.get("/notifications")
+async def list_notifications(unread_only: bool = False, current=Depends(get_current_user)):
+    q = {"user_id": current["user_id"]}
+    if unread_only:
+        q["read"] = False
+    rows = await db.notifications.find(q, {"_id": 0}).sort("created_at", -1).to_list(50)
+    unread = await db.notifications.count_documents({"user_id": current["user_id"], "read": False})
+    return {"items": rows, "unread": unread}
+
+
+@api_router.post("/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: str, current=Depends(get_current_user)):
+    res = await db.notifications.update_one(
+        {"notification_id": notification_id, "user_id": current["user_id"]},
+        {"$set": {"read": True, "read_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"ok": True}
+
+
+@api_router.post("/notifications/read-all")
+async def mark_all_notifications_read(current=Depends(get_current_user)):
+    res = await db.notifications.update_many(
+        {"user_id": current["user_id"], "read": False},
+        {"$set": {"read": True, "read_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    return {"ok": True, "updated": res.modified_count}
 
 
 # ====================== Email auto-sort (inbound webhook, e.g. Resend / Mailgun) ======================
@@ -3160,6 +3592,66 @@ async def list_dreams(current=Depends(get_current_user)):
     items = await db.dreams.find({"user_id": current["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(20)
     return {"items": items}
 
+
+class DreamEdit(BaseModel):
+    dream: str
+
+
+@api_router.patch("/student/dreams/{dream_id}")
+async def edit_dream(dream_id: str, req: DreamEdit, current=Depends(get_current_user)):
+    """Re-run the dream-mapping AI with an updated dream statement. The old plan is archived."""
+    row = await db.dreams.find_one({"dream_id": dream_id, "user_id": current["user_id"]})
+    if not row:
+        raise HTTPException(status_code=404, detail="Dream not found")
+    mod = await moderate_text(req.dream, "dreams", current)
+    if mod["action"] == "block":
+        raise HTTPException(status_code=400, detail="That content can't be processed.")
+    system = (
+        "You are Learnify Compass — a warm, realistic career and life mentor. "
+        f"Student level: {_grade_descriptor(current.get('grade_level', 'uk_y10'))}. "
+        "The student has REVISED their dream — build a fresh, honest, UK-specific route. "
+        "Do not be generic; reflect the specific words they used. Use markdown."
+    )
+    user_text = (
+        f"Previous dream: {row.get('dream','')}\n"
+        f"Revised dream: {req.dream}\n\n"
+        f"Map a fresh route. Return STRICT JSON:\n"
+        f'{{"summary":"string (2 sentences, mention what changed)",'
+        f'"subjects_to_focus":["string"],'
+        f'"qualifications":[{{"stage":"GCSE/A-Level/Degree/Apprenticeship/etc","details":"string"}}],'
+        f'"extracurricular":["string"],'
+        f'"first_3_steps":["string"],'
+        f'"realistic_challenges":["string"],'
+        f'"backup_paths":["string (2-3 realistic alternatives if the main dream shifts)"],'
+        f'"timeframe_years":0}}\n'
+        f"No prose outside JSON."
+    )
+    try:
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"dream_{dream_id}", system_message=system).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        response = await chat.send_message(UserMessage(text=user_text))
+        plan = extract_json(response)
+    except Exception as e:
+        logging.exception("dream edit failed")
+        raise HTTPException(status_code=500, detail=f"AI failed: {e}")
+    updates = {
+        "dream": req.dream,
+        "plan": plan,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.dreams.update_one(
+        {"dream_id": dream_id},
+        {"$set": updates, "$push": {"history": {"dream": row.get("dream"), "plan": row.get("plan"), "at": row.get("updated_at") or row.get("created_at")}}},
+    )
+    return await db.dreams.find_one({"dream_id": dream_id}, {"_id": 0})
+
+
+@api_router.delete("/student/dreams/{dream_id}")
+async def delete_dream(dream_id: str, current=Depends(get_current_user)):
+    res = await db.dreams.delete_one({"dream_id": dream_id, "user_id": current["user_id"]})
+    if not res.deleted_count:
+        raise HTTPException(status_code=404, detail="Dream not found")
+    return {"ok": True}
+
 @api_router.post("/suggestions")
 async def submit_suggestion(req: SuggestionSubmit, current=Depends(get_current_user)):
     mod = await moderate_text(req.message, "suggestion", current)
@@ -3266,8 +3758,8 @@ DPA_DOC_ID = "school_learn_uk_gdpr_dpa_v1"
 
 DPA_DOCUMENT = {
     "title": "SCHOOL LEARN — UK GDPR PRIVACY NOTICE AND DATA PROCESSING AGREEMENT",
-    "version": "2.0",
-    "effective_date": "2026-02-21",
+    "version": "2.1",
+    "effective_date": "2026-03-01",
     "support_email": "schoollearnsupport@pm.me",
     "contents": [
         "1. Introduction",
@@ -3275,6 +3767,7 @@ DPA_DOCUMENT = {
         "3. Personal Data We Process",
         "4. Purposes of Processing",
         "5. Lawful Bases for Processing",
+        "5A. AI-Assisted Processing and Automated Decision-Making",
         "6. Security Measures",
         "7. Sub-processors",
         "8. Data Subject Rights",
@@ -3286,21 +3779,34 @@ DPA_DOCUMENT = {
         "14. Liability",
     ],
     "sections": [
-        {"heading": "Introduction", "body": "School Learn is an educational platform designed to support teaching, learning, assessment, revision activities and AI-assisted educational services. This document explains what personal data is processed, why it is processed, how it is protected and the rights of individuals under UK GDPR and the Data Protection Act 2018. For any questions about this notice or to exercise data rights, contact schoollearnsupport@pm.me."},
-        {"heading": "Roles and Responsibilities", "body": "Schools and educational institutions generally act as Data Controllers. School Learn acts as a Data Processor and processes personal data only on documented instructions from the Controller."},
-        {"heading": "Personal Data We Process", "body": "At present, the platform collects and processes the following personal data: Student Name; Teacher Name; Class Name; Year Group; Disabilities (special category data — see Section 5); User Account / Login Details; Learning Progress Information (reset monthly — see Section 11)."},
-        {"heading": "Purposes of Processing", "body": "Processing supports account management, delivery of educational content, assessments, revision activities, AI-assisted support, safeguarding, security and compliance obligations."},
-        {"heading": "Lawful Bases for Processing", "body": "Processing may rely on Legal Obligation, Public Task, Contract and Legitimate Interests where appropriate. Special category data will only be processed where a relevant Article 9 condition applies."},
-        {"heading": "Security Measures", "body": "Appropriate technical and organisational measures are implemented, including encryption, access controls, security monitoring and secure development practices."},
-        {"heading": "Sub-processors", "body": "Approved third-party providers may be used to host or support the service. All sub-processors are subject to contractual data protection obligations equivalent to UK GDPR requirements."},
-        {"heading": "Data Subject Rights", "body": "Individuals may exercise rights of access, rectification, erasure, restriction, portability and objection, subject to applicable law. Requests can be directed to schoollearnsupport@pm.me."},
-        {"heading": "Personal Data Breaches", "body": "School Learn will notify Controllers without undue delay after becoming aware of a personal data breach affecting personal data processed on their behalf."},
-        {"heading": "International Transfers", "body": "International transfers will only occur where appropriate safeguards are in place, including adequacy regulations, IDTA or the UK Addendum to SCCs."},
-        {"heading": "Retention and Deletion", "body": "User account / login details are retained indefinitely and are only deleted when the school manually requests or performs deletion. Learning progress data is retained for one month and is then wiped, resetting the baseline so that the AI can adapt to the student's current level. Before this monthly reset, the school may choose to save a file of that month's learning data for the student if they wish to retain a record. All personal data is otherwise retained only for as long as necessary and deleted or returned upon termination of services, subject to legal obligations."},
-        {"heading": "Children's Data", "body": "The platform is designed with children's privacy and safeguarding considerations in mind and processes children's data only for legitimate educational purposes."},
-        {"heading": "Complaints", "body": "Individuals may contact their institution, School Learn at schoollearnsupport@pm.me, or the Information Commissioner's Office (ICO) regarding concerns about personal data processing."},
-        {"heading": "Liability", "body": "Each party remains responsible for its own obligations under applicable data protection legislation. Nothing seeks to exclude liability where doing so would be unlawful."},
+        {"heading": "1. Introduction", "body": "School Learn is an educational platform designed to support teaching, learning, assessment, revision activities and AI-assisted educational services. This document explains what personal data is processed, why it is processed, how it is protected and the rights of individuals under UK GDPR and the Data Protection Act 2018. For any questions about this notice or to exercise data rights, contact schoollearnsupport@pm.me."},
+        {"heading": "2. Roles and Responsibilities", "body": "Schools and educational institutions generally act as Data Controllers. School Learn acts as a Data Processor and processes personal data only on documented instructions from the Controller."},
+        {"heading": "3. Personal Data We Process", "body": "At present, the platform collects and processes the following personal data: Student Name; Teacher Name; Class Name; Year Group; Disabilities (special category data — see Section 5); User Account / Login Details; Learning Progress Information (reset monthly — see Section 11)."},
+        {"heading": "4. Purposes of Processing", "body": "Processing supports account management, delivery of educational content, assessments, revision activities, AI-assisted support, safeguarding, security and compliance obligations."},
+        {"heading": "5. Lawful Bases for Processing", "body": "Processing may rely on Legal Obligation, Public Task, Contract and Legitimate Interests where appropriate. Special category data will only be processed where a relevant Article 9 condition applies."},
+        {"heading": "5A. AI-Assisted Processing and Automated Decision-Making", "body": "School Learn uses artificial intelligence to support the delivery of the platform, including adaptive content delivery, personalised recommendations, and tracking of learning progress. This section explains how that processing works and the safeguards that apply.\n\nSchool Learn utilises third-party AI sub-processors (including OpenAI, LLC and Anthropic, PBC) to execute adaptive learning functions. Data is transmitted securely via encrypted API connections governed by standard UK International Data Transfer Agreements (IDTA). Personal data passed to these services is limited to necessary prompt parameters and is never retained by third-party providers to train public models.\n\nSchool Learn confirms that all AI-assisted features are designed exclusively to support teacher decision-making. They are not used to make any automated decision that produces a legal effect or a similarly significant effect on a student without human involvement.\n\nThe AI-assisted functionality adapts the content shown to a student based on the Learning Progress Information described in Section 3, which is reset on a monthly basis as described in Section 11. This means that any pattern identified by the AI is based on recent performance rather than a permanent record.\n\nA student, parent, or the school may request that a decision informed by the AI-assisted functionality be reviewed by a member of teaching staff, and may object to the use of AI-assisted features in respect of a particular student, by contacting the school or School Learn at schoollearnsupport@pm.me.\n\nSchool Learn will carry out a Data Protection Impact Assessment in respect of any AI-assisted processing that is likely to result in a high risk to individuals, and will make the outcome available to the Controller on request."},
+        {"heading": "6. Security Measures", "body": "Appropriate technical and organisational measures are implemented, including encryption, access controls, security monitoring and secure development practices."},
+        {"heading": "7. Sub-processors", "body": "Approved third-party providers may be used to host or support the service. Key sub-processors include Amazon Web Services Emergent for cloud hosting, OpenAI LLC / Anthropic PBC for AI engine services, and Clerk for identity authentication. All sub-processors are subject to contractual data protection obligations equivalent to UK GDPR requirements. School Learn will inform the Controller of any intended addition or replacement of a sub-processor and will give the Controller the opportunity to object before that sub-processor begins processing personal data."},
+        {"heading": "8. Data Subject Rights", "body": "Individuals may exercise rights of access, rectification, erasure, restriction, portability and objection, subject to applicable law. Requests can be directed to schoollearnsupport@pm.me. School Learn will provide reasonable assistance to the Controller in responding to such requests."},
+        {"heading": "9. Personal Data Breaches", "body": "School Learn will notify Controllers without undue delay after becoming aware of a personal data breach affecting personal data processed on their behalf. That notification will include, so far as it is known at the time, the nature of the breach, the categories and approximate number of data subjects and records concerned, the likely consequences, and the measures taken or proposed to address the breach."},
+        {"heading": "10. International Transfers", "body": "International transfers will only occur where appropriate safeguards are in place, including adequacy regulations, IDTA or the UK Addendum to SCCs."},
+        {"heading": "11. Retention and Deletion", "body": "Personal data is retained only for as long as necessary for the purposes set out in this notice, and in accordance with the schedule below.\n\nWhere a retention period is expressed by reference to an event, such as a student leaving the school or an account no longer being required, the period runs from the date on which School Learn is informed of that event by the school, or from the date on which School Learn otherwise becomes aware of it.\n\nAll personal data is otherwise retained only for as long as necessary for the purposes for which it was collected, and is deleted or returned to the Controller upon termination of the agreement between School Learn and the school, save where retention is required by law. School Learn will review the retention periods set out in this section at least annually and will notify the Controller of any material change."},
+        {"heading": "12. Children's Data", "body": "The platform is designed with children's privacy and safeguarding considerations in mind and processes children's data only for legitimate educational purposes."},
+        {"heading": "13. Complaints", "body": "Individuals may contact their institution, School Learn at schoollearnsupport@pm.me, or the Information Commissioner's Office (ICO) regarding concerns about personal data processing."},
+        {"heading": "14. Liability", "body": "Each party remains responsible for its own obligations under applicable data protection legislation. Nothing seeks to exclude liability where doing so would be unlawful."},
     ],
+    "retention_table": {
+        "columns": ["Category of Personal Data", "Retention Period", "Basis for Retention Period"],
+        "rows": [
+            ["Student Name", "Duration of active enrolment; permanently deleted within 30 days after school confirmation that student has left.", "Necessary to identify the student within the platform."],
+            ["Teacher Name", "Duration of active account access; deleted within 30 days after account deactivation or contract termination.", "Necessary to administer teacher accounts and permissions."],
+            ["Class Name", "Retained for the academic year to which it relates, then deleted or archived per the school's instructions.", "Necessary to organise content and progress by class group."],
+            ["Year Group", "Retained for the academic year to which it relates, then deleted or archived per the school's instructions.", "Necessary to tailor content to the appropriate curriculum level."],
+            ["Disabilities (special category data)", "Retained for the active academic year required; reviewed annually and deleted within 30 days of the student leaving or accommodation ending.", "Special category data. Kept to the minimum necessary given its sensitivity."],
+            ["User Account / Login Details", "Retained indefinitely unless and until the school instructs deletion.", "Required to maintain account access while the school uses the platform."],
+            ["Learning Progress Information", "Retained for one month on a rolling basis, then permanently deleted, resetting the adaptive AI baseline. The school may export a copy before deletion.", "Reflects the platform's adaptive design and the school's control over retained records."],
+        ],
+    },
 }
 
 

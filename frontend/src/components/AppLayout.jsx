@@ -5,6 +5,7 @@ import GlobalNav from "@/components/GlobalNav";
 import SideNav, { SideNavMobileTrigger } from "@/components/SideNav";
 import OnboardingTour from "@/components/OnboardingTour";
 import ParentConsentModal from "@/components/ParentConsentModal";
+import NotificationBell from "@/components/NotificationBell";
 
 function SupportBanner() {
   return (
@@ -40,7 +41,11 @@ export default function AppLayout({ children }) {
         <div className="flex-1 flex flex-col min-w-0">
           <div className="lg:hidden sticky top-0 z-30 bg-paper/95 backdrop-blur border-b-2 border-ink px-4 py-3 flex items-center gap-3">
             <SideNavMobileTrigger onOpen={() => setMobileNav(true)} />
-            <span className="font-display font-black text-lg tracking-tight">Learnify</span>
+            <span className="font-display font-black text-lg tracking-tight flex-1">Learnify</span>
+            <NotificationBell />
+          </div>
+          <div className="hidden lg:flex sticky top-0 z-30 bg-paper/80 backdrop-blur border-b-2 border-ink px-6 py-2 items-center justify-end gap-2" data-testid="app-top-bar">
+            <NotificationBell />
           </div>
           <main className="flex-1 w-full max-w-6xl mx-auto px-4 md:px-8 py-6 md:py-10" data-testid="app-main">
             {children}

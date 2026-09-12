@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { Buildings, Users, BookOpen, Lightning, ChartLineUp, Chat, Crown, Ticket, ShieldCheck, Link as LinkIcon } from "@phosphor-icons/react";
+import { Buildings, Users, BookOpen, Lightning, ChartLineUp, Chat, Crown, Ticket, ShieldCheck, Link as LinkIcon, UsersFour } from "@phosphor-icons/react";
 import BusinessPanel from "./owner/BusinessPanel";
 import PromoCodesPanel from "./owner/PromoCodesPanel";
 import PaymentLinksPanel from "./owner/PaymentLinksPanel";
 import DpaAcceptancesPanel from "./owner/DpaAcceptancesPanel";
+import GuardianAuditPanel from "./owner/GuardianAuditPanel";
 
 export default function Owner() {
   const { user } = useAuth();
@@ -56,6 +57,7 @@ export default function Owner() {
           <TabBtn active={tab === "promo"} onClick={() => setTab("promo")} testid="tab-promo"><Ticket size={14} weight="bold" /> Promo Codes</TabBtn>
           <TabBtn active={tab === "links"} onClick={() => setTab("links")} testid="tab-links"><LinkIcon size={14} weight="bold" /> Payment Links</TabBtn>
           <TabBtn active={tab === "dpa"} onClick={() => setTab("dpa")} testid="tab-dpa"><ShieldCheck size={14} weight="bold" /> DPA Acceptances</TabBtn>
+          <TabBtn active={tab === "guardian"} onClick={() => setTab("guardian")} testid="tab-guardian"><UsersFour size={14} weight="bold" /> Guardian Audit</TabBtn>
         </div>
 
         {tab === "overview" && (
@@ -141,6 +143,7 @@ export default function Owner() {
         {tab === "promo" && <PromoCodesPanel />}
         {tab === "links" && <PaymentLinksPanel />}
         {tab === "dpa" && <DpaAcceptancesPanel />}
+        {tab === "guardian" && <GuardianAuditPanel />}
       </div>
     </AppLayout>
   );
