@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { Users, Plus, X, ClipboardText, Clock, ShieldWarning, CheckCircle, ChartLineUp, Trophy, GraduationCap } from "@phosphor-icons/react";
+import { Users, Plus, X, ClipboardText, Clock, ShieldWarning, CheckCircle, ChartLineUp, Trophy, GraduationCap, HandPalm } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const STATUS_LABEL = {
@@ -77,6 +77,22 @@ export default function Parent() {
       load();
       setSelected(null); setSummary(null);
     } catch (ex) { toast.error(ex?.response?.data?.detail || "Failed"); }
+  };
+
+  const toggleReWithdrawal = async (child, next) => {
+    try {
+      const { data } = await api.patch(`/students/${child.child_user_id}/re-withdrawal`, {
+        withdrawn: next,
+        reason: next ? "Parental request via Parent Portal" : null,
+      });
+      setChildren((cs) => cs.map((c) => c.child_user_id === child.child_user_id ? { ...c, re_withdrawn: data.re_withdrawn } : c));
+      if (selected?.child_user_id === child.child_user_id) {
+        setSelected((s) => ({ ...s, re_withdrawn: data.re_withdrawn }));
+      }
+      toast.success(next ? `${child.child_name || child.child_email} withdrawn from RE.` : `${child.child_name || child.child_email} re-enrolled in RE.`);
+    } catch (ex) {
+      toast.error(ex?.response?.data?.detail || "Failed");
+    }
   };
 
   const open = async (c) => {
@@ -206,8 +222,34 @@ export default function Parent() {
                   <div>
                     <h2 className="font-display font-black text-2xl">{selected.child_name || selected.child_email}</h2>
                     <div className="text-xs text-[#4A4A4A] font-mono mt-1">{selected.child_email}</div>
+                    {selected.re_withdrawn && (
+                      <div className="mt-2 inline-flex items-center gap-1 px-2 py-0.5 border-2 border-ink rounded-md bg-peach text-[10px] font-bold uppercase" data-testid="parent-re-withdrawn-badge">
+                        <HandPalm size={12} weight="fill" /> Withdrawn from RE
+                      </div>
+                    )}
                   </div>
                   <button onClick={() => unlink(selected.child_email)} className="text-xs underline text-red-800 inline-flex items-center gap-1" data-testid="parent-unlink"><X size={12} /> Unlink</button>
+                </div>
+
+                <div className="brutal-card p-4 bg-white flex items-start gap-3" data-testid="parent-re-toggle-card">
+                  <HandPalm size={22} weight={selected.re_withdrawn ? "fill" : "bold"} />
+                  <div className="flex-1">
+                    <div className="font-display font-bold text-base">Religious Education (RE)</div>
+                    <p className="text-xs text-[#4A4A4A] mt-1">
+                      Under the Education Act 1996 s.71, parents may withdraw a pupil from RE lessons.
+                      The school will be notified automatically. You can switch this back at any time.
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-2 shrink-0 cursor-pointer">
+                    <span className="text-xs uppercase tracking-[0.2em] font-bold">{selected.re_withdrawn ? "Withdrawn" : "Enrolled"}</span>
+                    <input
+                      type="checkbox"
+                      checked={!!selected.re_withdrawn}
+                      onChange={(e) => toggleReWithdrawal(selected, e.target.checked)}
+                      className="w-5 h-5 border-2 border-ink"
+                      data-testid="parent-re-withdraw-toggle"
+                    />
+                  </label>
                 </div>
                 <div className="brutal-card p-5 bg-white">
                   <h3 className="font-display font-bold text-lg mb-2 flex items-center gap-2"><ClipboardText size={16} /> Homework</h3>

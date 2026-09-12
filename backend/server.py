@@ -2719,6 +2719,94 @@ def _pct_to_gcse_band(pct: float) -> str:
     return "U"
 
 
+# ====================== GCSE grade boundaries (retrospective upload per board/subject/series) ======================
+# Rule from user: NEVER hardcode boundaries. Schools upload the awarding-body PDFs each series and we
+# apply them retrospectively for term-grade band conversion.
+
+class BoundaryRow(BaseModel):
+    grade: str            # "9", "8", ... "1", "U"
+    min_mark: int         # inclusive lower bound
+    tier: Optional[str] = None  # "foundation" / "higher" for tiered subjects; else null
+
+
+class BoundaryUpload(BaseModel):
+    board: Literal["aqa", "edexcel", "ocr", "eduqas"]
+    subject: str          # free-text — should match subject id from curriculum
+    series: str           # e.g. "June 2025", "Nov 2024"
+    max_marks: int
+    tier: Optional[Literal["foundation", "higher", "single"]] = "single"
+    rows: List[BoundaryRow]
+    notes: Optional[str] = None
+
+
+@api_router.post("/curriculum/gcse-boundaries")
+async def upload_gcse_boundaries(req: BoundaryUpload, current=Depends(require_authed_role(ROLE_SCHOOL_ADMIN))):
+    """SLT uploads retrospective GCSE 9-1 boundaries for one board/subject/tier/series.
+    Multiple uploads coexist — the latest wins for the same (board, subject, tier, series) key."""
+    doc = {
+        "boundary_id": f"gb_{uuid.uuid4().hex[:10]}",
+        "school_id": current.get("school_id"),
+        "board": req.board,
+        "subject": req.subject.strip(),
+        "series": req.series.strip(),
+        "tier": req.tier or "single",
+        "max_marks": req.max_marks,
+        "rows": [r.dict() for r in req.rows],
+        "notes": req.notes,
+        "uploaded_by": current.get("email"),
+        "uploaded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    key = {"school_id": current.get("school_id"), "board": req.board,
+           "subject": req.subject.strip(), "series": req.series.strip(), "tier": req.tier or "single"}
+    await db.gcse_boundaries.update_one(key, {"$set": doc}, upsert=True)
+    return doc
+
+
+@api_router.get("/curriculum/gcse-boundaries")
+async def list_gcse_boundaries(board: Optional[str] = None, subject: Optional[str] = None,
+                                 series: Optional[str] = None, current=Depends(get_current_user)):
+    q = {}
+    if not is_owner(current):
+        q["school_id"] = current.get("school_id")
+    if board: q["board"] = board
+    if subject: q["subject"] = subject
+    if series: q["series"] = series
+    rows = await db.gcse_boundaries.find(q, {"_id": 0}).sort("uploaded_at", -1).to_list(500)
+    return {"count": len(rows), "boundaries": rows}
+
+
+@api_router.delete("/curriculum/gcse-boundaries/{boundary_id}")
+async def delete_gcse_boundary(boundary_id: str, current=Depends(require_authed_role(ROLE_SCHOOL_ADMIN))):
+    q = {"boundary_id": boundary_id}
+    if not is_owner(current):
+        q["school_id"] = current.get("school_id")
+    res = await db.gcse_boundaries.delete_one(q)
+    if not res.deleted_count:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True}
+
+
+async def _apply_boundaries(school_id: Optional[str], board: str, subject: str, tier: str, mark: int, max_marks: int) -> Optional[str]:
+    """Look up the latest uploaded boundary sheet and return the awarded grade — or None if
+    no sheet is available. Fallback to coarse percentage banding is the caller's job."""
+    if not school_id:
+        return None
+    row = await db.gcse_boundaries.find_one(
+        {"school_id": school_id, "board": board, "subject": subject, "tier": tier},
+        sort=[("uploaded_at", -1)],
+    )
+    if not row:
+        return None
+    # Normalise mark to the sheet's max scale if different.
+    scaled_mark = mark if max_marks == row.get("max_marks") else round(mark * row["max_marks"] / max_marks) if max_marks else mark
+    # Rows are sorted desc by min_mark; find the first threshold met.
+    sorted_rows = sorted(row.get("rows") or [], key=lambda r: int(r.get("min_mark", 0)), reverse=True)
+    for r in sorted_rows:
+        if scaled_mark >= int(r["min_mark"]):
+            return r["grade"]
+    return "U"
+
+
 # ====================== Lesson Revision History (view + restore) ======================
 
 @api_router.get("/teacher/lessons/{lesson_id}/revisions")

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
 import { SUBJECTS } from "@/lib/subjects";
-import { Lightning, Plus, ChartBar, Sparkle, FileText, Warning, ChalkboardTeacher, ArrowsClockwise, Prohibit, Clock, LockOpen } from "@phosphor-icons/react";
+import { Lightning, Plus, ChartBar, Sparkle, FileText, Warning, ChalkboardTeacher, ArrowsClockwise, Prohibit, Clock, LockOpen, ClockCounterClockwise, ArrowUUpLeft, Scales } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const TABS = [
@@ -10,6 +10,7 @@ const TABS = [
   { id: "homework", label: "Homework", icon: FileText },
   { id: "detentions", label: "Detentions", icon: Warning },
   { id: "locks", label: "Locks", icon: Prohibit },
+  { id: "boundaries", label: "Grade Boundaries", icon: Scales },
 ];
 
 export default function Teacher() {
@@ -42,6 +43,7 @@ export default function Teacher() {
         {tab === "homework" && <HomeworkTab />}
         {tab === "detentions" && <DetentionsTab />}
         {tab === "locks" && <LocksTab />}
+        {tab === "boundaries" && <BoundariesTab />}
       </div>
     </AppLayout>
   );
@@ -146,8 +148,36 @@ function LessonPlanView({ lesson }) {
   const [refinePrompt, setRefinePrompt] = useState("");
   const [refining, setRefining] = useState(false);
   const [current, setCurrent] = useState(lesson);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [revisions, setRevisions] = useState([]);
+  const [restoringIdx, setRestoringIdx] = useState(null);
   useEffect(() => { setCurrent(lesson); }, [lesson.lesson_id]);
   const cp = current.plan || p;
+
+  const loadRevisions = async () => {
+    try {
+      const { data } = await api.get(`/teacher/lessons/${current.lesson_id}/revisions`);
+      setRevisions(data.revisions || []);
+    } catch { setRevisions([]); }
+  };
+  const toggleHistory = async () => {
+    if (!historyOpen) await loadRevisions();
+    setHistoryOpen((v) => !v);
+  };
+  const restore = async (idx) => {
+    if (!window.confirm("Restore this version? The current live plan will be archived so nothing is lost.")) return;
+    setRestoringIdx(idx);
+    try {
+      const { data } = await api.post(`/teacher/lessons/${current.lesson_id}/revisions/restore`, { index: idx });
+      setCurrent(data);
+      await loadRevisions();
+      toast.success("Version restored.");
+    } catch (ex) {
+      toast.error(ex.response?.data?.detail || "Restore failed");
+    } finally {
+      setRestoringIdx(null);
+    }
+  };
   const makePptx = async () => {
     setDl(true);
     try {
@@ -185,6 +215,13 @@ function LessonPlanView({ lesson }) {
         <h3 className="font-display font-extrabold text-2xl">{cp.title || current.title}</h3>
         <div className="flex gap-2">
           <button
+            onClick={toggleHistory}
+            className="brutal-btn bg-white hover:bg-lavender inline-flex items-center gap-2"
+            data-testid="lesson-history-toggle"
+          >
+            <ClockCounterClockwise size={16} weight="bold" /> {historyOpen ? "Close history" : `Version history${revisions.length ? ` (${revisions.length})` : ""}`}
+          </button>
+          <button
             onClick={() => setRefineOpen((v) => !v)}
             className="brutal-btn bg-butter hover:bg-white inline-flex items-center gap-2"
             data-testid="lesson-refine-toggle"
@@ -201,6 +238,42 @@ function LessonPlanView({ lesson }) {
           </button>
         </div>
       </div>
+      {historyOpen && (
+        <div className="mt-3 brutal-card p-3 bg-lavender" data-testid="lesson-history-drawer">
+          <div className="text-xs uppercase tracking-[0.2em] font-bold mb-2 flex items-center gap-2">
+            <ClockCounterClockwise size={14} weight="bold" /> Every AI-generated version — one click to restore
+          </div>
+          {revisions.length === 0 ? (
+            <div className="text-sm text-[#4A4A4A]">This lesson hasn't been refined yet — the current plan is the only version.</div>
+          ) : (
+            <ul className="space-y-2">
+              {revisions.map((r) => (
+                <li key={r.index} className="brutal-card p-3 bg-white flex flex-wrap items-start gap-3" data-testid={`lesson-revision-${r.index}`}>
+                  <div className="flex-1 min-w-[220px]">
+                    <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">
+                      Version #{r.index + 1} · {new Date(r.at).toLocaleString()}
+                    </div>
+                    <div className="font-bold text-sm mt-1">{r.plan?.title || "Untitled plan"}</div>
+                    {r.prompt && <div className="text-xs text-[#333] mt-1"><strong>Edit prompt:</strong> {r.prompt}</div>}
+                    <div className="text-xs text-[#4A4A4A] mt-1">
+                      {r.plan?.objectives?.length || 0} objectives · {r.plan?.main?.length || 0} activities
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => restore(r.index)}
+                    disabled={restoringIdx === r.index}
+                    data-testid={`lesson-revision-restore-${r.index}`}
+                    className="brutal-btn bg-ink text-white text-sm inline-flex items-center gap-2 disabled:opacity-60"
+                  >
+                    <ArrowUUpLeft size={14} weight="bold" />
+                    {restoringIdx === r.index ? "Restoring…" : "Restore this version"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {refineOpen && (
         <form onSubmit={refine} className="mt-3 brutal-card p-3 bg-butter space-y-2" data-testid="lesson-refine-form">
           <label className="block">
@@ -656,6 +729,171 @@ function LocksTab() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function BoundariesTab() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({
+    board: "aqa", subject: "", series: "", tier: "single", max_marks: 100, notes: "",
+    rows: [
+      { grade: "9", min_mark: 80 }, { grade: "8", min_mark: 70 }, { grade: "7", min_mark: 60 },
+      { grade: "6", min_mark: 50 }, { grade: "5", min_mark: 40 }, { grade: "4", min_mark: 30 },
+      { grade: "3", min_mark: 20 }, { grade: "2", min_mark: 10 }, { grade: "1", min_mark: 1 },
+    ],
+  });
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/curriculum/gcse-boundaries");
+      setRows(data.boundaries || []);
+    } catch { setRows([]); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, []);
+
+  const setRow = (i, key, val) => {
+    setForm((f) => {
+      const next = f.rows.slice();
+      next[i] = { ...next[i], [key]: key === "min_mark" ? Number(val) : val };
+      return { ...f, rows: next };
+    });
+  };
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!form.subject.trim() || !form.series.trim()) {
+      toast.error("Subject and series are required.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.post("/curriculum/gcse-boundaries", form);
+      toast.success("Boundaries saved. Term grades now use these thresholds.");
+      setOpen(false);
+      await load();
+    } catch (ex) {
+      toast.error(ex.response?.data?.detail || "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+  const remove = async (id) => {
+    if (!window.confirm("Delete this boundary sheet?")) return;
+    try {
+      await api.delete(`/curriculum/gcse-boundaries/${id}`);
+      setRows((r) => r.filter((x) => x.boundary_id !== id));
+      toast.success("Deleted.");
+    } catch (ex) {
+      toast.error(ex.response?.data?.detail || "Delete failed");
+    }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="boundaries-tab">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-[#4A4A4A] text-sm max-w-3xl">
+          Upload the awarding body's published GCSE 9-1 grade boundaries here. Term grades will map raw marks
+          to the correct grade for that <strong>board / subject / series / tier</strong>. Never hardcoded — refresh each series.
+        </div>
+        <button onClick={() => setOpen((v) => !v)} className="brutal-btn bg-ink text-white inline-flex items-center gap-2" data-testid="boundaries-new-btn">
+          <Plus size={14} weight="bold" /> {open ? "Close" : "Upload boundaries"}
+        </button>
+      </div>
+
+      {open && (
+        <form onSubmit={submit} className="brutal-card p-4 bg-butter space-y-3" data-testid="boundaries-form">
+          <div className="grid sm:grid-cols-3 gap-3">
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.2em] font-bold">Board</span>
+              <select className="mt-2 brutal-input w-full bg-white" value={form.board} onChange={(e) => setForm({ ...form, board: e.target.value })} data-testid="boundaries-board">
+                <option value="aqa">AQA</option>
+                <option value="edexcel">Pearson Edexcel</option>
+                <option value="ocr">OCR</option>
+                <option value="eduqas">Eduqas / WJEC</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.2em] font-bold">Subject</span>
+              <input required className="mt-2 brutal-input w-full" placeholder="Mathematics" value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} data-testid="boundaries-subject" />
+            </label>
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.2em] font-bold">Series</span>
+              <input required className="mt-2 brutal-input w-full" placeholder="June 2025" value={form.series} onChange={(e) => setForm({ ...form, series: e.target.value })} data-testid="boundaries-series" />
+            </label>
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.2em] font-bold">Tier</span>
+              <select className="mt-2 brutal-input w-full bg-white" value={form.tier} onChange={(e) => setForm({ ...form, tier: e.target.value })} data-testid="boundaries-tier">
+                <option value="single">Single tier</option>
+                <option value="foundation">Foundation</option>
+                <option value="higher">Higher</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="text-xs uppercase tracking-[0.2em] font-bold">Max marks</span>
+              <input type="number" min={1} required className="mt-2 brutal-input w-full" value={form.max_marks} onChange={(e) => setForm({ ...form, max_marks: Number(e.target.value) })} data-testid="boundaries-max-marks" />
+            </label>
+          </div>
+          <div>
+            <div className="text-xs uppercase tracking-[0.2em] font-bold mb-2">Minimum raw mark per grade</div>
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+              {form.rows.map((r, i) => (
+                <label key={r.grade} className="block">
+                  <span className="text-xs font-bold">Grade {r.grade}</span>
+                  <input type="number" min={0} value={r.min_mark} onChange={(e) => setRow(i, "min_mark", e.target.value)}
+                    data-testid={`boundaries-row-${r.grade}`}
+                    className="mt-1 brutal-input w-full font-mono" />
+                </label>
+              ))}
+            </div>
+          </div>
+          <label className="block">
+            <span className="text-xs uppercase tracking-[0.2em] font-bold">Notes (optional)</span>
+            <input className="mt-2 brutal-input w-full" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Paper 1 · calculator · non-tiered" data-testid="boundaries-notes" />
+          </label>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setOpen(false)} className="brutal-btn bg-white">Cancel</button>
+            <button type="submit" disabled={saving} className="brutal-btn bg-ink text-white flex-1 disabled:opacity-60" data-testid="boundaries-save-btn">
+              {saving ? "Saving…" : "Save boundaries"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {loading ? (
+        <div className="brutal-card p-6 text-[#4A4A4A]">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="brutal-card p-6 text-[#4A4A4A]" data-testid="boundaries-empty">No boundaries uploaded yet. Term grades fall back to a coarse percentage banding.</div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((r) => (
+            <div key={r.boundary_id} className="brutal-card p-3 bg-white" data-testid={`boundaries-row-${r.boundary_id}`}>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <div className="font-display font-bold text-base">{r.subject} · {r.board.toUpperCase()} · {r.series}</div>
+                  <div className="text-xs text-[#4A4A4A]">Tier: {r.tier} · Max marks: {r.max_marks} · uploaded {new Date(r.uploaded_at).toLocaleDateString()}</div>
+                </div>
+                <button onClick={() => remove(r.boundary_id)} className="brutal-btn bg-white hover:bg-peach text-sm inline-flex items-center gap-1" data-testid={`boundaries-delete-${r.boundary_id}`}>
+                  <Prohibit size={14} weight="bold" /> Delete
+                </button>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1 text-xs font-mono">
+                {r.rows.map((row) => (
+                  <span key={row.grade} className="px-2 py-0.5 border-2 border-ink rounded-md bg-butter">
+                    {row.grade}: ≥{row.min_mark}
+                  </span>
+                ))}
+              </div>
+              {r.notes && <div className="text-xs text-[#4A4A4A] mt-2">{r.notes}</div>}
+            </div>
+          ))}
         </div>
       )}
     </div>
