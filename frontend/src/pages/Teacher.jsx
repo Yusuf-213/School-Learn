@@ -823,6 +823,7 @@ function ReSyllabusTab() {
   );
 }
 
+function BoundariesTab() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
