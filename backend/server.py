@@ -47,15 +47,15 @@ PLANS = {
     "standard": {"name": "Standard", "amount": 10.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": False},
     "pro":      {"name": "Pro",      "amount": 15.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": True},
     # School plans (annual). Stripe Checkout creates one-off £ session; activation gives 365 days.
-    "school_small":  {"name": "School · Small (600–1,000 students)",   "amount": 3000.00,   "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1000},
-    "school_medium": {"name": "School · Medium (1,000–1,500 students)","amount": 8000.00,   "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1500},
-    "school_large":  {"name": "School · Large (1,500+ students)",      "amount": 15000.00,  "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 99999},
-    "mat_1_5":       {"name": "MAT · 1–5 schools",                     "amount": 200000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 5},
-    "mat_5_10":      {"name": "MAT · 5–10 schools",                    "amount": 400000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 10},
-    "mat_10_30":     {"name": "MAT · 10–30 schools",                   "amount": 600000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 30},
-    "mat_30_50":     {"name": "MAT · 30–50 schools",                   "amount": 800000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 50},
-    "mat_50_80":     {"name": "MAT · 50–80 schools",                   "amount": 1000000.00,"currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 80},
-    "mat_80_100":    {"name": "MAT · 80–100 schools",                  "amount": 2000000.00,"currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 100},
+    "school_small":  {"name": "School · Small (Under 500 students)",     "amount": 5000.00,  "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 500},
+    "school_medium": {"name": "School · Medium (500–1,000 students)",    "amount": 9000.00,  "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1000},
+    "school_large":  {"name": "School · Large (1,000+ students)",         "amount": 14000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 99999},
+    "mat_1_5":       {"name": "MAT · Small (3–5 schools)",                "amount": 35000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 5},
+    "mat_5_10":      {"name": "MAT · Medium (5–10 schools)",              "amount": 60000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 10},
+    "mat_10_30":     {"name": "MAT · Large (10+ schools)",                "amount": 85000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 99999},
+    "mat_30_50":     {"name": "MAT · 30–50 schools (bespoke)",            "amount": 85000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 50, "hidden": True},
+    "mat_50_80":     {"name": "MAT · 50–80 schools (bespoke)",            "amount": 85000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 80, "hidden": True},
+    "mat_80_100":    {"name": "MAT · 80–100 schools (bespoke)",           "amount": 85000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 100, "hidden": True},
 }
 
 # Owner accounts — global super-admins. All credentials loaded from env so they can be rotated
@@ -2525,20 +2525,255 @@ UK_CURRICULUM_SEED = [
 
 
 async def _seed_curriculum():
-    existing = await db.curriculum.count_documents({})
-    if existing == 0:
-        for row in UK_CURRICULUM_SEED:
-            await db.curriculum.insert_one({**row, "curriculum_id": f"curr_{uuid.uuid4().hex[:10]}"})
-        logging.info("Seeded UK curriculum with %d rows", len(UK_CURRICULUM_SEED))
+    """Seed the full UK curriculum tree (Primary → GCSE → A-Level → IB) from curriculum_data.py."""
+    from curriculum_data import seed_curriculum
+    return await seed_curriculum(db)
 
 
 @api_router.get("/curriculum")
-async def get_curriculum(stage: Optional[str] = None, key_stage: Optional[str] = None):
-    q = {}
-    if stage: q["stage"] = stage
-    if key_stage: q["key_stage"] = key_stage
-    rows = await db.curriculum.find(q, {"_id": 0}).sort([("stage", 1), ("key_stage", 1), ("subject", 1)]).to_list(500)
-    return {"count": len(rows), "curriculum": rows}
+async def get_curriculum(pathway: Optional[str] = None):
+    """Return the full curriculum tree (Primary/GCSE/A-Level/IB) with grading scales."""
+    from curriculum_data import CURRICULUM_TREE
+    if pathway:
+        p = next((x for x in CURRICULUM_TREE["pathways"] if x["pathway_id"] == pathway), None)
+        if not p:
+            raise HTTPException(status_code=404, detail=f"Unknown pathway '{pathway}'")
+        return {"pathway": p, "grading_scales": CURRICULUM_TREE["grading_scales"]}
+    return CURRICULUM_TREE
+
+
+@api_router.get("/curriculum/exam-boards")
+async def get_exam_boards():
+    """Return GCSE exam boards (AQA / Edexcel / OCR / Eduqas) with subjects."""
+    from curriculum_data import GCSE
+    return {"boards": GCSE["exam_boards"], "science_routes": GCSE["science_routes"], "tiers": GCSE["tiers"]}
+
+
+@api_router.get("/curriculum/calculator-allowed")
+async def curriculum_calculator_allowed(grade_level: Optional[str] = None, current=Depends(get_current_user)):
+    """Guard endpoint: is the caller (or a supplied grade_level) allowed calculator-based tools?
+    Below the end of KS2 (Year 6), the answer is False and the client should hide calc features."""
+    from curriculum_data import can_use_calculator, CALCULATOR_ALLOWED_YEARS
+    gl = grade_level or current.get("grade_level")
+    allowed = can_use_calculator(gl)
+    return {
+        "grade_level": gl,
+        "allowed": allowed,
+        "reason": None if allowed else "Calculator features are restricted below the end of KS2 (Year 6) per DfE guidance.",
+        "allowed_from": "uk_y6",
+    }
+
+
+# ====================== School RE syllabus + Parental RE withdrawal ======================
+
+class ReSyllabusUpdate(BaseModel):
+    syllabus: str                                    # locally-agreed syllabus (rich text OK)
+    provider: Optional[str] = None                   # e.g. "Hampshire SACRE" / "Diocese of Southwark"
+    linked_policy_url: Optional[str] = None
+
+
+@api_router.get("/school/re-syllabus")
+async def get_school_re_syllabus(current=Depends(get_current_user)):
+    """Return the current school's RE syllabus (school_admin/teacher/parent/student view)."""
+    sid = current.get("school_id")
+    if not sid:
+        return {"syllabus": None, "provider": None, "linked_policy_url": None, "updated_at": None}
+    row = await db.schools.find_one({"school_id": sid}, {"_id": 0, "re_syllabus": 1})
+    return (row or {}).get("re_syllabus") or {"syllabus": None, "provider": None, "linked_policy_url": None, "updated_at": None}
+
+
+@api_router.patch("/school/re-syllabus")
+async def update_school_re_syllabus(req: ReSyllabusUpdate, current=Depends(require_authed_role(ROLE_SCHOOL_ADMIN))):
+    """SLT edits their school's Religious Education syllabus (locally-agreed, per LA/SACRE)."""
+    sid = current.get("school_id")
+    if not sid:
+        raise HTTPException(status_code=400, detail="No school on account")
+    payload = {
+        "syllabus": req.syllabus,
+        "provider": req.provider,
+        "linked_policy_url": req.linked_policy_url,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": current.get("email"),
+    }
+    await db.schools.update_one({"school_id": sid}, {"$set": {"re_syllabus": payload}})
+    return payload
+
+
+class ReWithdrawalToggle(BaseModel):
+    withdrawn: bool
+    reason: Optional[str] = None                     # optional free-text (parent's statement)
+
+
+@api_router.patch("/students/{student_user_id}/re-withdrawal")
+async def set_re_withdrawal(student_user_id: str, req: ReWithdrawalToggle, current=Depends(get_current_user)):
+    """Parents can withdraw their linked child from RE. SLT can also toggle on behalf.
+    Under Education Act 1996 s.71, parental request is sufficient — this stores the record."""
+    # Authorisation: parent linked + approved, OR school_admin same school, OR owner.
+    if is_owner(current):
+        pass
+    elif current.get("role") == ROLE_SCHOOL_ADMIN:
+        s = await db.users.find_one({"user_id": student_user_id}, {"_id": 0, "school_id": 1})
+        if not s or s.get("school_id") != current.get("school_id"):
+            raise HTTPException(status_code=403, detail="Not your school")
+    elif current.get("role") == ROLE_PARENT:
+        link = await db.parent_links.find_one({
+            "parent_user_id": current["user_id"],
+            "child_user_id": student_user_id,
+            "status": "approved",
+        })
+        if not link:
+            raise HTTPException(status_code=403, detail="Not linked to this child")
+    else:
+        raise HTTPException(status_code=403, detail="Not permitted")
+    updates = {
+        "re_withdrawn": bool(req.withdrawn),
+        "re_withdrawal_reason": req.reason,
+        "re_withdrawal_recorded_at": datetime.now(timezone.utc).isoformat(),
+        "re_withdrawal_recorded_by": current.get("email"),
+    }
+    await db.users.update_one({"user_id": student_user_id}, {"$set": updates})
+    # Audit log (parents' safeguarding compliance)
+    await db.re_withdrawal_audit.insert_one({
+        "audit_id": f"rw_{uuid.uuid4().hex[:10]}",
+        "at": datetime.now(timezone.utc).isoformat(),
+        "student_user_id": student_user_id,
+        "actor_user_id": current.get("user_id"),
+        "actor_role": current.get("role"),
+        "withdrawn": bool(req.withdrawn),
+        "reason": req.reason,
+    })
+    return {"ok": True, **updates}
+
+
+# ====================== Assignment Grade Book (term-grade calculator) ======================
+
+@api_router.get("/student/term-grade")
+async def my_term_grade(current=Depends(get_current_user)):
+    """Weighted term grade for the caller (student). Only counts homework rows marked
+    is_assignment=True. Each assignment contributes its `weight` (default 1.0 = even split).
+    Returns percentage + estimated GCSE 9-1 grade band."""
+    return await _compute_term_grade(current["user_id"])
+
+
+@api_router.get("/students/{student_user_id}/term-grade")
+async def other_student_term_grade(student_user_id: str, current=Depends(get_current_user)):
+    """Teachers/SLT/linked-parents can view a specific student's term grade."""
+    if is_owner(current) or current.get("role") in {ROLE_TEACHER, ROLE_SCHOOL_ADMIN}:
+        pass
+    elif current.get("role") == ROLE_PARENT:
+        link = await db.parent_links.find_one({
+            "parent_user_id": current["user_id"], "child_user_id": student_user_id, "status": "approved",
+        })
+        if not link:
+            raise HTTPException(status_code=403, detail="Not linked to this child")
+    elif current["user_id"] != student_user_id:
+        raise HTTPException(status_code=403, detail="Not permitted")
+    return await _compute_term_grade(student_user_id)
+
+
+async def _compute_term_grade(student_user_id: str) -> dict:
+    subs = await db.homework_submissions.find({"student_user_id": student_user_id}, {"_id": 0}).to_list(1000)
+    if not subs:
+        return {"percentage": None, "assignments": [], "count": 0, "band": None}
+    rows = []
+    total_weighted = 0.0
+    total_weight = 0.0
+    for s in subs:
+        hw = await db.homework.find_one({"homework_id": s["homework_id"], "is_assignment": True}, {"_id": 0})
+        if not hw:
+            continue
+        max_score = float(hw.get("max_score") or 100)
+        score = float(s.get("score") or 0)
+        pct = (score / max_score) * 100 if max_score else 0
+        weight = float(hw.get("weight") if hw.get("weight") is not None else 1.0)
+        total_weighted += pct * weight
+        total_weight += weight
+        rows.append({
+            "homework_id": hw["homework_id"],
+            "title": hw.get("title"),
+            "subject": hw.get("subject"),
+            "score": score,
+            "max_score": max_score,
+            "percentage": round(pct, 1),
+            "weight": weight,
+            "due_date": hw.get("due_date"),
+        })
+    if not rows or total_weight == 0:
+        return {"percentage": None, "assignments": [], "count": 0, "band": None}
+    percentage = round(total_weighted / total_weight, 1)
+    band = _pct_to_gcse_band(percentage)
+    return {"percentage": percentage, "band": band, "count": len(rows), "assignments": rows}
+
+
+def _pct_to_gcse_band(pct: float) -> str:
+    # Coarse estimated band — real boundaries come from board-published grade boundaries.
+    if pct >= 90: return "9"
+    if pct >= 80: return "8"
+    if pct >= 70: return "7"
+    if pct >= 60: return "6"
+    if pct >= 50: return "5"
+    if pct >= 40: return "4"
+    if pct >= 30: return "3"
+    if pct >= 20: return "2"
+    if pct >= 10: return "1"
+    return "U"
+
+
+# ====================== Lesson Revision History (view + restore) ======================
+
+@api_router.get("/teacher/lessons/{lesson_id}/revisions")
+async def list_lesson_revisions(lesson_id: str, current=Depends(get_current_user)):
+    row = await db.lessons.find_one({"lesson_id": lesson_id}, {"_id": 0})
+    if not row:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    _require_lesson_read(current, row)
+    revisions = row.get("revisions") or []
+    return {
+        "lesson_id": lesson_id,
+        "current_plan": row.get("plan"),
+        "count": len(revisions),
+        "revisions": [
+            {"index": i, "at": r.get("at"), "prompt": r.get("prompt"), "plan": r.get("plan")}
+            for i, r in enumerate(revisions)
+        ],
+    }
+
+
+class LessonRestore(BaseModel):
+    index: int
+
+
+@api_router.post("/teacher/lessons/{lesson_id}/revisions/restore")
+async def restore_lesson_revision(lesson_id: str, req: LessonRestore, current=Depends(require_authed_role(ROLE_TEACHER))):
+    """Restore a previous AI-generated version of the lesson plan. The currently-live plan is
+    itself pushed onto the revisions history so nothing is ever lost."""
+    row = await db.lessons.find_one({"lesson_id": lesson_id})
+    if not row:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    if not is_owner(current) and row.get("teacher_user_id") != current["user_id"]:
+        raise HTTPException(status_code=403, detail="Not your lesson")
+    revisions = row.get("revisions") or []
+    if req.index < 0 or req.index >= len(revisions):
+        raise HTTPException(status_code=400, detail="Revision index out of range")
+    target = revisions[req.index]
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.lessons.update_one(
+        {"lesson_id": lesson_id},
+        {"$set": {
+            "plan": target.get("plan"),
+            "updated_at": now_iso,
+            "last_restored_at": now_iso,
+            "last_restored_from_index": req.index,
+        }, "$push": {"revisions": {
+            "at": now_iso,
+            "prompt": f"[restored to revision #{req.index}] {(row.get('last_refine_prompt') or '').strip()}",
+            "plan": row.get("plan"),
+        }}},
+    )
+    return await db.lessons.find_one({"lesson_id": lesson_id}, {"_id": 0})
+
+
+# ====================== Startup: seed owner & wipe demo users ======================
 
 
 # ====================== Timetable (weekly recurring + one-off overrides) ======================
@@ -3758,8 +3993,8 @@ DPA_DOC_ID = "school_learn_uk_gdpr_dpa_v1"
 
 DPA_DOCUMENT = {
     "title": "SCHOOL LEARN — UK GDPR PRIVACY NOTICE AND DATA PROCESSING AGREEMENT",
-    "version": "2.1",
-    "effective_date": "2026-03-01",
+    "version": "2.0",
+    "effective_date": "2026-02-21",
     "support_email": "schoollearnsupport@pm.me",
     "contents": [
         "1. Introduction",
@@ -3767,7 +4002,6 @@ DPA_DOCUMENT = {
         "3. Personal Data We Process",
         "4. Purposes of Processing",
         "5. Lawful Bases for Processing",
-        "5A. AI-Assisted Processing and Automated Decision-Making",
         "6. Security Measures",
         "7. Sub-processors",
         "8. Data Subject Rights",
@@ -3779,34 +4013,21 @@ DPA_DOCUMENT = {
         "14. Liability",
     ],
     "sections": [
-        {"heading": "1. Introduction", "body": "School Learn is an educational platform designed to support teaching, learning, assessment, revision activities and AI-assisted educational services. This document explains what personal data is processed, why it is processed, how it is protected and the rights of individuals under UK GDPR and the Data Protection Act 2018. For any questions about this notice or to exercise data rights, contact schoollearnsupport@pm.me."},
-        {"heading": "2. Roles and Responsibilities", "body": "Schools and educational institutions generally act as Data Controllers. School Learn acts as a Data Processor and processes personal data only on documented instructions from the Controller."},
-        {"heading": "3. Personal Data We Process", "body": "At present, the platform collects and processes the following personal data: Student Name; Teacher Name; Class Name; Year Group; Disabilities (special category data — see Section 5); User Account / Login Details; Learning Progress Information (reset monthly — see Section 11)."},
-        {"heading": "4. Purposes of Processing", "body": "Processing supports account management, delivery of educational content, assessments, revision activities, AI-assisted support, safeguarding, security and compliance obligations."},
-        {"heading": "5. Lawful Bases for Processing", "body": "Processing may rely on Legal Obligation, Public Task, Contract and Legitimate Interests where appropriate. Special category data will only be processed where a relevant Article 9 condition applies."},
-        {"heading": "5A. AI-Assisted Processing and Automated Decision-Making", "body": "School Learn uses artificial intelligence to support the delivery of the platform, including adaptive content delivery, personalised recommendations, and tracking of learning progress. This section explains how that processing works and the safeguards that apply.\n\nSchool Learn utilises third-party AI sub-processors (including OpenAI, LLC and Anthropic, PBC) to execute adaptive learning functions. Data is transmitted securely via encrypted API connections governed by standard UK International Data Transfer Agreements (IDTA). Personal data passed to these services is limited to necessary prompt parameters and is never retained by third-party providers to train public models.\n\nSchool Learn confirms that all AI-assisted features are designed exclusively to support teacher decision-making. They are not used to make any automated decision that produces a legal effect or a similarly significant effect on a student without human involvement.\n\nThe AI-assisted functionality adapts the content shown to a student based on the Learning Progress Information described in Section 3, which is reset on a monthly basis as described in Section 11. This means that any pattern identified by the AI is based on recent performance rather than a permanent record.\n\nA student, parent, or the school may request that a decision informed by the AI-assisted functionality be reviewed by a member of teaching staff, and may object to the use of AI-assisted features in respect of a particular student, by contacting the school or School Learn at schoollearnsupport@pm.me.\n\nSchool Learn will carry out a Data Protection Impact Assessment in respect of any AI-assisted processing that is likely to result in a high risk to individuals, and will make the outcome available to the Controller on request."},
-        {"heading": "6. Security Measures", "body": "Appropriate technical and organisational measures are implemented, including encryption, access controls, security monitoring and secure development practices."},
-        {"heading": "7. Sub-processors", "body": "Approved third-party providers may be used to host or support the service. Key sub-processors include Amazon Web Services Emergent for cloud hosting, OpenAI LLC / Anthropic PBC for AI engine services, and Clerk for identity authentication. All sub-processors are subject to contractual data protection obligations equivalent to UK GDPR requirements. School Learn will inform the Controller of any intended addition or replacement of a sub-processor and will give the Controller the opportunity to object before that sub-processor begins processing personal data."},
-        {"heading": "8. Data Subject Rights", "body": "Individuals may exercise rights of access, rectification, erasure, restriction, portability and objection, subject to applicable law. Requests can be directed to schoollearnsupport@pm.me. School Learn will provide reasonable assistance to the Controller in responding to such requests."},
-        {"heading": "9. Personal Data Breaches", "body": "School Learn will notify Controllers without undue delay after becoming aware of a personal data breach affecting personal data processed on their behalf. That notification will include, so far as it is known at the time, the nature of the breach, the categories and approximate number of data subjects and records concerned, the likely consequences, and the measures taken or proposed to address the breach."},
-        {"heading": "10. International Transfers", "body": "International transfers will only occur where appropriate safeguards are in place, including adequacy regulations, IDTA or the UK Addendum to SCCs."},
-        {"heading": "11. Retention and Deletion", "body": "Personal data is retained only for as long as necessary for the purposes set out in this notice, and in accordance with the schedule below.\n\nWhere a retention period is expressed by reference to an event, such as a student leaving the school or an account no longer being required, the period runs from the date on which School Learn is informed of that event by the school, or from the date on which School Learn otherwise becomes aware of it.\n\nAll personal data is otherwise retained only for as long as necessary for the purposes for which it was collected, and is deleted or returned to the Controller upon termination of the agreement between School Learn and the school, save where retention is required by law. School Learn will review the retention periods set out in this section at least annually and will notify the Controller of any material change."},
-        {"heading": "12. Children's Data", "body": "The platform is designed with children's privacy and safeguarding considerations in mind and processes children's data only for legitimate educational purposes."},
-        {"heading": "13. Complaints", "body": "Individuals may contact their institution, School Learn at schoollearnsupport@pm.me, or the Information Commissioner's Office (ICO) regarding concerns about personal data processing."},
-        {"heading": "14. Liability", "body": "Each party remains responsible for its own obligations under applicable data protection legislation. Nothing seeks to exclude liability where doing so would be unlawful."},
+        {"heading": "Introduction", "body": "School Learn is an educational platform designed to support teaching, learning, assessment, revision activities and AI-assisted educational services. This document explains what personal data is processed, why it is processed, how it is protected and the rights of individuals under UK GDPR and the Data Protection Act 2018. For any questions about this notice or to exercise data rights, contact schoollearnsupport@pm.me."},
+        {"heading": "Roles and Responsibilities", "body": "Schools and educational institutions generally act as Data Controllers. School Learn acts as a Data Processor and processes personal data only on documented instructions from the Controller."},
+        {"heading": "Personal Data We Process", "body": "At present, the platform collects and processes the following personal data: Student Name; Teacher Name; Class Name; Year Group; Disabilities (special category data — see Section 5); User Account / Login Details; Learning Progress Information (reset monthly — see Section 11)."},
+        {"heading": "Purposes of Processing", "body": "Processing supports account management, delivery of educational content, assessments, revision activities, AI-assisted support, safeguarding, security and compliance obligations."},
+        {"heading": "Lawful Bases for Processing", "body": "Processing may rely on Legal Obligation, Public Task, Contract and Legitimate Interests where appropriate. Special category data will only be processed where a relevant Article 9 condition applies."},
+        {"heading": "Security Measures", "body": "Appropriate technical and organisational measures are implemented, including encryption, access controls, security monitoring and secure development practices."},
+        {"heading": "Sub-processors", "body": "Approved third-party providers may be used to host or support the service. All sub-processors are subject to contractual data protection obligations equivalent to UK GDPR requirements."},
+        {"heading": "Data Subject Rights", "body": "Individuals may exercise rights of access, rectification, erasure, restriction, portability and objection, subject to applicable law. Requests can be directed to schoollearnsupport@pm.me."},
+        {"heading": "Personal Data Breaches", "body": "School Learn will notify Controllers without undue delay after becoming aware of a personal data breach affecting personal data processed on their behalf."},
+        {"heading": "International Transfers", "body": "International transfers will only occur where appropriate safeguards are in place, including adequacy regulations, IDTA or the UK Addendum to SCCs."},
+        {"heading": "Retention and Deletion", "body": "User account / login details are retained indefinitely and are only deleted when the school manually requests or performs deletion. Learning progress data is retained for one month and is then wiped, resetting the baseline so that the AI can adapt to the student's current level. Before this monthly reset, the school may choose to save a file of that month's learning data for the student if they wish to retain a record. All personal data is otherwise retained only for as long as necessary and deleted or returned upon termination of services, subject to legal obligations."},
+        {"heading": "Children's Data", "body": "The platform is designed with children's privacy and safeguarding considerations in mind and processes children's data only for legitimate educational purposes."},
+        {"heading": "Complaints", "body": "Individuals may contact their institution, School Learn at schoollearnsupport@pm.me, or the Information Commissioner's Office (ICO) regarding concerns about personal data processing."},
+        {"heading": "Liability", "body": "Each party remains responsible for its own obligations under applicable data protection legislation. Nothing seeks to exclude liability where doing so would be unlawful."},
     ],
-    "retention_table": {
-        "columns": ["Category of Personal Data", "Retention Period", "Basis for Retention Period"],
-        "rows": [
-            ["Student Name", "Duration of active enrolment; permanently deleted within 30 days after school confirmation that student has left.", "Necessary to identify the student within the platform."],
-            ["Teacher Name", "Duration of active account access; deleted within 30 days after account deactivation or contract termination.", "Necessary to administer teacher accounts and permissions."],
-            ["Class Name", "Retained for the academic year to which it relates, then deleted or archived per the school's instructions.", "Necessary to organise content and progress by class group."],
-            ["Year Group", "Retained for the academic year to which it relates, then deleted or archived per the school's instructions.", "Necessary to tailor content to the appropriate curriculum level."],
-            ["Disabilities (special category data)", "Retained for the active academic year required; reviewed annually and deleted within 30 days of the student leaving or accommodation ending.", "Special category data. Kept to the minimum necessary given its sensitivity."],
-            ["User Account / Login Details", "Retained indefinitely unless and until the school instructs deletion.", "Required to maintain account access while the school uses the platform."],
-            ["Learning Progress Information", "Retained for one month on a rolling basis, then permanently deleted, resetting the adaptive AI baseline. The school may export a copy before deletion.", "Reflects the platform's adaptive design and the school's control over retained records."],
-        ],
-    },
 }
 
 

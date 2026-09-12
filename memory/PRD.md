@@ -4,81 +4,82 @@ Learnify is a UK school management platform — preschool through university —
 covering AI tutoring, lesson planning, homework/assignment grading, parent portal,
 Stripe billing, safeguarding & UK GDPR compliance.
 
-## Iteration 21 (2026-03-01) — DPA v2.1, Assignments, AI memory, Dream editing, Designer PPTX
+## Iteration 22 (2026-03-01) — Curriculum Engine · Grade Book · Revisions · RE · Pricing · DPA revert
 
-### DPA / UK GDPR v2.1
-- Replaced entire DPA document with the user-supplied Feb-2026 revision.
-- New section **5A. AI-Assisted Processing and Automated Decision-Making**.
-- Structured **retention_table** returned in payload and rendered as a bordered table on `/dpa`.
-- Sub-processors updated (AWS Emergent, OpenAI, Anthropic, Clerk).
-- Version bumped to **2.1**, effective **2026-03-01** — every existing user must re-accept via the DPA gate on next login.
-- Fixed `DPA.jsx` numbering (removed automatic `idx+1.` prefix — headings already carry their own numbers).
+### DPA reverted to v2.0
+- Restored the previous shorter DPA text (14 sections, no 5A, no retention table).
+- Current DPA gate version: **2.0** (effective 2026-02-21).
 
-### Homework → Assignment workflow
-- `HomeworkCreate` gained `is_assignment: bool` + optional `due_date`.
-- New endpoint `POST /api/teacher/homework/{id}/assignment` toggles a homework task to/from a graded assignment (adds `assignment_promoted_at` + optional `weight` 0-1).
-- `Teacher.jsx` HomeworkTab: new "Set as graded assignment" checkbox in the create form, and per-row "Promote to assignment" / "Revert to homework" button.
-- Assignment rows show a butter-yellow **ASSIGNMENT** badge.
+### UK Curriculum Engine (backend + seed)
+- New module `/app/backend/curriculum_data.py`:
+  - **Primary** (Reception → Year 6): KS1/KS2, core (English/Maths/Science) + foundation subjects, RE with `school_editable_syllabus` + `parental_withdrawal`, statutory **Year 6 Swimming 25m** reporting fields, calculator-use guard.
+  - **GCSE** (Year 10-11): four exam boards (**AQA / Pearson Edexcel / OCR / Eduqas**), each with full subject list, per-subject tiers (Foundation/Higher), science routes (Combined vs Triple), per-student enrolment metadata.
+  - **A-Level**: full subject list including **SQE Law**, all major Engineering disciplines (Mechanical / Electrical / Civil / Aerospace / Chemical / Software), and Physics topics including **Quantum Physics**.
+  - **IB Diploma**: 6 subject groups + Core (**TOK / EE / CAS**), HL/SL depth rules, 45-point total, core bonus matrix.
+- **Grading scales** kept separate from data: `ks2_scaled_score` (80-120, 100 = expected, 110 = greater depth), `teacher_assessed`, `gcse_9_1` with `boundary_policy: retrospective_per_board_per_series`, `alevel_star_e` with UCAS points, `ib_1_7` with 45 total and CAS pass/fail.
+- Idempotent `_seed_curriculum()` runs on startup and stores the tree + checksum in `db.curriculum`.
 
-### AI Homework Helper — better memory + step-by-step + confirm
-- Rewrote `/api/ai/help` system prompt so the model:
-  - Never asks the student to restate the question (the chat has full context).
-  - Detects "just give me the answer" style requests and switches to **STEP MODE** — one small step at a time.
-  - Emits a `[[CONFIRM_STEP]]` marker at the end of any step reply.
-  - Advances to the next step only when the student clicks the confirm button (or types "I understand").
-- `Help.jsx` strips the `[[CONFIRM_STEP]]` marker from displayed text and renders a big
-  **"I understand — next step"** button on the last assistant message
-  (`data-testid=help-confirm-step-btn`). Clicking it sends "I understand" as a follow-up.
+### Curriculum API endpoints
+- `GET /api/curriculum` — full tree, filterable by `?pathway=`.
+- `GET /api/curriculum/exam-boards` — GCSE boards + science routes + tiers.
+- `GET /api/curriculum/calculator-allowed?grade_level=` — calculator-use guard. Returns `allowed: false` for Reception through Year 5, `true` from Year 6 onwards.
 
-### Dreams — editable, deletable, backup paths
-- Existing dream text is now editable. New endpoints:
-  - `PATCH /api/student/dreams/{id}` — re-runs the AI on the revised dream and archives the old plan under `history[]`.
-  - `DELETE /api/student/dreams/{id}`.
-- AI response now also includes `backup_paths[]` (2-3 realistic alternatives).
-- `Dreams.jsx` shows Edit / Delete buttons, an inline textarea to revise, an archived-version count, and a Backup Paths card.
+### Calculator use guard
+- `can_use_calculator(grade_level)` in `curriculum_data.py` — front-end can check per-user at load and hide calculator features below end of KS2.
 
-### Lesson refine after generation
-- New endpoint `POST /api/teacher/lessons/{id}/refine` — takes an `edit_prompt` string, calls Claude with the existing plan JSON, replaces it, and archives the previous version under `revisions[]`.
-- `LessonPlanView` in `Teacher.jsx` gained an **Edit with AI** panel (`data-testid=lesson-refine-toggle` + `lesson-refine-input` + `lesson-refine-submit`). New plan renders in place.
+### School-editable RE syllabus + Parental RE Withdrawal
+- `GET /api/school/re-syllabus` and `PATCH /api/school/re-syllabus` — SLT edits the locally-agreed RE syllabus (with provider e.g. SACRE and linked policy URL).
+- `PATCH /api/students/{id}/re-withdrawal` — parent (linked + approved) OR school_admin OR owner can flip the child's `re_withdrawn` flag with optional reason. Every change is stamped into `db.re_withdrawal_audit` (immutable audit row).
 
-### Designer PowerPoint
-- Rewrote `/api/teacher/lessons/{id}/pptx` to produce a properly designed deck:
-  - Bold dark cover slide with butter accent block and Learnify kicker.
-  - Every content slide: paper background, coloured accent band on the left, kicker label, white title card, white body card, per-section colour palette (mint / butter / peach / sky / lavender), Verdana typography, Learnify footer, speaker notes preserved.
-- Palette avoids the tired purple-gradient-on-white AI-slop aesthetic.
+### Assignment Grade Book (weighted term grade)
+- `GET /api/student/term-grade` — weighted term grade for the caller.
+- `GET /api/students/{id}/term-grade` — teacher/SLT/linked-parent view of any student.
+- Aggregation: joins `homework_submissions` × `homework` where `is_assignment=True`, applies each assignment's `weight` (default 1.0), returns percentage + estimated GCSE 9-1 band.
+- `MyRecord.jsx` now leads with a **Term grade** tab (`mr-tab-grades`) showing the big percentage, band, and assignment breakdown with per-row weight (`my-grade-percentage`, `my-grade-band`, `my-grade-row-*`).
+
+### Lesson Revision History (view + one-click restore)
+- `GET /api/teacher/lessons/{id}/revisions` — every prior AI-generated plan is kept and returned in order with the prompt that produced it.
+- `POST /api/teacher/lessons/{id}/revisions/restore` — one-click restore. The currently-live plan is pushed onto the revisions stack so nothing is ever lost.
+
+### Pricing update (schools + MATs)
+- Backend `PLANS` updated with the pricing you set:
+  - Small School (Under 500) — **£5,000/yr**
+  - Medium School (500-1,000) — **£9,000/yr**
+  - Large School (1,000+) — **£14,000/yr**
+  - Small MAT (3-5 schools) — **£35,000/yr**
+  - Large MAT (10+ schools) — **£85,000/yr**
+- Legacy MAT bands (`mat_5_10`, `mat_30_50`, `mat_50_80`, `mat_80_100`) kept in the enum for backwards compatibility but marked `hidden: true` and priced at the Large MAT rate. `Pricing.jsx` FEATURES/ICONS/ACCENTS now list only the five visible tiers.
+
+## Iteration 21 (2026-02-28) — Assignments, AI memory, Dream editing, Designer PPTX
+_(retained — see prior version of this file)_
+
+- Homework `is_assignment` flag + toggle endpoint + Teacher.jsx UI.
+- Rewrote `/api/ai/help` prompt for real memory, step-by-step mode with `[[CONFIRM_STEP]]` marker + "I understand — next step" button.
+- Dreams: `PATCH` + `DELETE` endpoints, backup paths in the AI response, edit/delete UI.
+- Lesson refine: `POST /api/teacher/lessons/{id}/refine`.
+- Designer PPTX: cover slide + coloured section slides + speaker notes.
 
 ## Iteration 20 (2026-02-28) — Progress for Parents, Notifications, Guardian Audit, Downgrade Path
-
-### Backend
-- Parent `/api/parent/children/{id}/summary` already returned attendance/achievements/grades.
-- Owner Guardian Audit endpoint `/api/parent-link-audit` with search + action filter.
-- Notifications endpoints `/api/notifications`, `.../{id}/read`, `.../read-all`.
-- Stripe scheduled downgrade endpoints: `/api/billing/schedule-downgrade`, `/api/billing/cancel-downgrade`. `/api/billing/me` exposes `next_tier` + `downgrade_scheduled_at`.
-
-### Frontend wiring
-- `NotificationBell` mounted in mobile + desktop sticky bars of `AppLayout`.
-- `Owner.jsx` gained a **Guardian Audit** tab wired to `GuardianAuditPanel`.
-- `Parent.jsx` renders attendance rate, behaviour points, grades count + grades list + achievements list.
-- `Pricing.jsx` shows per-tier **Downgrade to <plan>** buttons for non-lifetime paid users, plus a scheduled-downgrade status pill and **Undo scheduled change** button.
+_(retained — see prior version of this file)_
 
 ## Standing rules (do not regress)
-- Rebranding: app is strictly **Learnify**. Never re-introduce "ScholarHub" or "Made with Emergent".
-- Promo code `HWA26` is lifetime free — do not remove.
-- MFA has been **removed** by explicit user request — do not reintroduce `pyotp` endpoints or a `/mfa` page.
+- App is **Learnify**. No "ScholarHub" or "Made with Emergent".
+- Promo code `HWA26` = lifetime free — do not remove.
+- **MFA removed** by explicit user request — do not reintroduce `pyotp` endpoints or a `/mfa` page.
 - Never restore fake pseudonyms; `displayHandle` uses the user's real handle.
 - All URLs, tokens, keys via `.env` only.
+- Grade boundaries are **never hardcoded** — schools upload retrospectively per board/subject/series.
 
 ## Backlog
 
-- **P0** — Comprehensive UK Curriculum & Assessment engine (still pending):
-  - Seed `curriculum` collection: Primary (KS1/KS2, Y6 swimming 25m), GCSE by board (AQA/Edexcel/OCR/Eduqas, Combined vs Triple science, Foundation/Higher tier), A-Level (incl. SQE Law, Engineering disciplines, Quantum Physics), IB Diploma (6 groups, HL/SL rules, TOK/EE/CAS).
-  - Grading logic: scaled scores (100 = expected) for KS2; teacher-assessed for Primary Science / Foundation; 9-1 for GCSE (retrospective boundaries); A*-E for A-Level; 1-7 (+ 45 total) for IB.
-  - School-editable RE syllabus + Parental RE Withdrawal flag on student records.
-  - Calculator guard for year groups below the end of KS2.
-- **P1** — Wire assignment weights into a real term-grade calculation and expose on the student "My Record" page.
-- **P1** — Add lesson revisions viewer (undo to prior AI-generated plan).
-- **P2** — Refactor `server.py` (>4,400 lines) into modular routers.
-- **P3** — Add DB indexes flagged by deployment agent.
+- **P1** — Frontend for RE withdrawal: add a toggle in `Parent.jsx` (per linked child) and in the school-admin roster (per student).
+- **P1** — Frontend for RE syllabus editor: add a card in the school-admin console pointing at `PATCH /api/school/re-syllabus`.
+- **P1** — Frontend for lesson revisions viewer: add a "Version history" drawer in Teacher.jsx that lists revisions and offers one-click restore.
+- **P1** — Frontend calculator guard: read `/api/curriculum/calculator-allowed` at app boot and hide calc features for pre-KS2 students.
+- **P1** — Grade boundaries upload: `POST /api/curriculum/gcse-boundaries` for schools to enter retrospective boundaries per board/subject/series.
+- **P2** — Split `server.py` (>4,800 lines) into modular routers.
+- **P2** — Year 6 Swimming 25m form in the school-admin console.
+- **P3** — DB indexes flagged by deployment agent.
 
 ## Test credentials
-See `/app/memory/test_credentials.md` — Owner `Yusufm_1@outlook.com / The_Underdog` and school-admin `Tester@tester.org / 123`.
+See `/app/memory/test_credentials.md` — Owner `Yusufm_1@outlook.com / The_Underdog`.

@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
-import { Warning, CheckCircle, Trophy, Calendar } from "@phosphor-icons/react";
+import { Warning, CheckCircle, Trophy, Calendar, GraduationCap } from "@phosphor-icons/react";
 
 const TABS = [
+  { id: "grades", label: "Term grade", icon: GraduationCap },
   { id: "detentions", label: "Detentions", icon: Warning },
   { id: "attendance", label: "Attendance", icon: Calendar },
   { id: "achievements", label: "Achievement points", icon: Trophy },
 ];
 
 export default function MyRecord() {
-  const [tab, setTab] = useState("detentions");
+  const [tab, setTab] = useState("grades");
 
   return (
     <AppLayout>
@@ -29,11 +30,58 @@ export default function MyRecord() {
           ))}
         </div>
 
+        {tab === "grades" && <GradesTab />}
         {tab === "detentions" && <DetentionsTab />}
         {tab === "attendance" && <AttendanceTab />}
         {tab === "achievements" && <AchievementsTab />}
       </div>
     </AppLayout>
+  );
+}
+
+function GradesTab() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    api.get("/student/term-grade")
+      .then(({ data }) => setData(data))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, []);
+  if (loading) return <div className="brutal-card p-6 text-[#4A4A4A]">Loading term grade…</div>;
+  if (!data || data.percentage === null) {
+    return <Empty msg="No graded assignments yet. Ask your teacher to promote a homework to an assignment." />;
+  }
+  const gradeBg = data.percentage >= 70 ? "bg-mint" : data.percentage >= 50 ? "bg-butter" : "bg-peach";
+  return (
+    <div className="space-y-4" data-testid="my-grades">
+      <div className={`brutal-card p-6 ${gradeBg}`}>
+        <div className="text-xs uppercase tracking-[0.2em] font-bold">Weighted term grade</div>
+        <div className="flex items-baseline gap-3 mt-1">
+          <div className="font-display font-black text-5xl" data-testid="my-grade-percentage">{data.percentage}%</div>
+          <div className="text-2xl font-display font-bold" data-testid="my-grade-band">Band {data.band}</div>
+        </div>
+        <div className="text-sm mt-2 text-[#4A4A4A]">
+          Across {data.count} assignment{data.count === 1 ? "" : "s"} · GCSE 9-1 estimated band using each assignment's weight.
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div className="text-xs uppercase tracking-[0.2em] font-bold">Assignment breakdown</div>
+        {data.assignments.map((a) => (
+          <div key={a.homework_id} className="brutal-card p-3 bg-white flex flex-wrap items-center gap-3" data-testid={`my-grade-row-${a.homework_id}`}>
+            <div className="flex-1 min-w-[220px]">
+              <div className="font-bold">{a.title}</div>
+              <div className="text-xs text-[#4A4A4A]">{a.subject}{a.due_date ? ` · due ${new Date(a.due_date).toLocaleDateString()}` : ""}</div>
+            </div>
+            <div className="text-xs font-mono px-2 py-0.5 border-2 border-ink rounded-md bg-butter">
+              {a.score}/{a.max_score} · {a.percentage}%
+            </div>
+            <div className="text-xs font-mono text-[#4A4A4A]">weight ×{a.weight}</div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

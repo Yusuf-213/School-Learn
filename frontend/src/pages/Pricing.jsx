@@ -12,19 +12,15 @@ const FEATURES = {
   basic:         ["50 AI generations per day", "All subjects", "Homework help", "Basic progress tracking"],
   standard:      ["Everything in Basic", "AI-generated mock papers", "Exam-board picker", "Extended progress reports"],
   pro:           ["Everything in Standard", "Unlimited generations", "All exam boards", "Priority support"],
-  school_small:  ["Everything in Pro for every student", "600–1,000 student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Invoice billing available"],
-  school_medium: ["Everything in Pro for every student", "1,000–1,500 student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Invoice billing + onboarding"],
-  school_large:  ["Everything in Pro for every student", "1,500+ student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Dedicated success manager"],
-  mat_1_5:       ["Everything in School plans", "1–5 schools licenced", "Central MAT dashboard", "Consolidated billing", "SLA support"],
-  mat_5_10:      ["Everything in MAT 1–5", "Up to 10 schools", "Trust-wide analytics", "Named account manager"],
-  mat_10_30:     ["Everything in MAT 5–10", "Up to 30 schools", "Trust-wide governance", "Priority engineering support"],
-  mat_30_50:     ["Everything in MAT 10–30", "Up to 50 schools", "Multi-region deployment", "Bespoke onboarding"],
-  mat_50_80:     ["Everything in MAT 30–50", "Up to 80 schools", "Custom SLAs", "Dedicated success team"],
-  mat_80_100:    ["Everything in MAT 50–80", "Up to 100 schools", "White-glove migration", "Board-level reporting"],
+  school_small:  ["Everything in Pro for every student", "Under 500 student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Invoice billing available"],
+  school_medium: ["Everything in Pro for every student", "500–1,000 student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Invoice billing + onboarding"],
+  school_large:  ["Everything in Pro for every student", "1,000+ student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Dedicated success manager"],
+  mat_1_5:       ["Everything in School plans", "3–5 schools licenced", "Central MAT dashboard", "Consolidated billing", "SLA support"],
+  mat_10_30:     ["Everything in Small MAT", "10+ schools", "Trust-wide analytics", "Named account manager", "Priority engineering support"],
 };
 
-const ICONS = { free: Sparkle, basic: Sparkle, standard: Sparkle, pro: Crown, school_small: Buildings, school_medium: Buildings, school_large: Buildings, mat_1_5: Buildings, mat_5_10: Buildings, mat_10_30: Buildings, mat_30_50: Buildings, mat_50_80: Buildings, mat_80_100: Buildings };
-const ACCENTS = { free: "bg-white", basic: "bg-mint", standard: "bg-butter", pro: "bg-lavender", school_small: "bg-peach", school_medium: "bg-peach", school_large: "bg-peach", mat_1_5: "bg-mint", mat_5_10: "bg-mint", mat_10_30: "bg-mint", mat_30_50: "bg-mint", mat_50_80: "bg-mint", mat_80_100: "bg-mint" };
+const ICONS = { free: Sparkle, basic: Sparkle, standard: Sparkle, pro: Crown, school_small: Buildings, school_medium: Buildings, school_large: Buildings, mat_1_5: Buildings, mat_10_30: Buildings };
+const ACCENTS = { free: "bg-white", basic: "bg-mint", standard: "bg-butter", pro: "bg-lavender", school_small: "bg-peach", school_medium: "bg-peach", school_large: "bg-peach", mat_1_5: "bg-mint", mat_10_30: "bg-mint" };
 
 export default function Pricing() {
   const { user } = useAuth();
