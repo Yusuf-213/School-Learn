@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import GlobalNav from "@/components/GlobalNav";
 import { api } from "@/lib/api";
-import { CheckCircle, Sparkle, Crown, Buildings, XCircle, ArrowsClockwise, Prohibit, EnvelopeSimple, ArrowDown, ArrowCounterClockwise } from "@phosphor-icons/react";
+import { CheckCircle, Sparkle, Crown, Buildings, XCircle, ArrowsClockwise, Prohibit, EnvelopeSimple, ArrowDown, ArrowCounterClockwise, Ticket } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -30,6 +30,24 @@ export default function Pricing() {
   const [loading, setLoading] = useState(null);
   const [cancelBusy, setCancelBusy] = useState(false);
   const [downgradeBusy, setDowngradeBusy] = useState(null);
+  const [promoCode, setPromoCode] = useState("");
+  const [redeeming, setRedeeming] = useState(false);
+
+  const redeemPromo = async (e) => {
+    e.preventDefault();
+    if (!promoCode.trim()) { toast.error("Enter a promo code"); return; }
+    setRedeeming(true);
+    try {
+      const { data } = await api.post("/billing/redeem", { code: promoCode.trim() });
+      toast.success(`${data.plan_name} unlocked — no card needed.${data.lifetime ? " Lifetime access." : ""}`);
+      setPromoCode("");
+      await refreshBilling();
+    } catch (ex) {
+      toast.error(ex.response?.data?.detail || "Redeem failed");
+    } finally {
+      setRedeeming(false);
+    }
+  };
 
   const refreshBilling = async () => {
     try {
@@ -221,6 +239,23 @@ export default function Pricing() {
           <button data-testid="pricing-tab-individual" className="px-4 py-2 rounded font-bold text-sm bg-ink text-white">Individuals</button>
         </div>
       </div>
+
+      {user && (
+        <form onSubmit={redeemPromo} className="brutal-card p-5 bg-butter flex flex-wrap items-center gap-3" data-testid="promo-redeem-card">
+          <Ticket size={22} weight="fill" />
+          <div className="flex-1 min-w-[220px]">
+            <div className="font-display font-bold text-lg">Have a promo code?</div>
+            <div className="text-xs text-[#4A4A4A]">Instant activation — no card needed. Valid codes unlock the plan on the spot.</div>
+          </div>
+          <input value={promoCode} onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+            placeholder="ENTER CODE" data-testid="promo-input"
+            className="brutal-input bg-white font-mono tracking-widest min-w-[180px]" />
+          <button type="submit" disabled={redeeming} data-testid="promo-redeem-btn"
+            className="brutal-btn bg-ink text-white inline-flex items-center gap-2 disabled:opacity-60">
+            <Sparkle size={14} weight="bold" /> {redeeming ? "Activating…" : "Redeem"}
+          </button>
+        </form>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-4 md:grid-cols-2">
         {cards.map((p) => {

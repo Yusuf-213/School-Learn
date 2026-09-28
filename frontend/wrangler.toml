@@ -1,0 +1,15 @@
+# Cloudflare Pages / Wrangler config for the Learnify React frontend.
+# Cloudflare Pages will auto-detect these settings on connect-to-GitHub, but keeping them here
+# makes redeploys reproducible.
+
+name = "learnify-frontend"
+compatibility_date = "2026-03-01"
+pages_build_output_dir = "build"
+
+[build]
+command = "yarn install --frozen-lockfile && yarn build"
+
+[env.production.vars]
+# Values are set in the Cloudflare Pages dashboard; the keys here are documentation-only.
+# REACT_APP_BACKEND_URL = "https://learnify-backend.onrender.com"
+# REACT_APP_AUTH_URL    = "https://auth.emergentagent.com"

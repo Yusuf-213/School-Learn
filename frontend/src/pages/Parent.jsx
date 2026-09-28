@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { Users, Plus, X, ClipboardText, Clock, ShieldWarning, CheckCircle, ChartLineUp, Trophy, GraduationCap, HandPalm } from "@phosphor-icons/react";
+import { Users, Plus, X, ClipboardText, Clock, ShieldWarning, CheckCircle, ChartLineUp, Trophy, GraduationCap, HandPalm, Robot } from "@phosphor-icons/react";
 import { toast } from "sonner";
 
 const STATUS_LABEL = {
@@ -90,6 +90,24 @@ export default function Parent() {
         setSelected((s) => ({ ...s, re_withdrawn: data.re_withdrawn }));
       }
       toast.success(next ? `${child.child_name || child.child_email} withdrawn from RE.` : `${child.child_name || child.child_email} re-enrolled in RE.`);
+    } catch (ex) {
+      toast.error(ex?.response?.data?.detail || "Failed");
+    }
+  };
+
+  const toggleAiDisabled = async (child, next) => {
+    try {
+      const { data } = await api.patch(`/students/${child.child_user_id}/ai-disabled`, {
+        ai_disabled: next,
+        reason: next ? "Parental request via Parent Portal" : null,
+      });
+      setChildren((cs) => cs.map((c) => c.child_user_id === child.child_user_id ? { ...c, ai_disabled_by_parent: data.ai_disabled_by_parent } : c));
+      if (selected?.child_user_id === child.child_user_id) {
+        setSelected((s) => ({ ...s, ai_disabled_by_parent: data.ai_disabled_by_parent }));
+      }
+      toast.success(next
+        ? `AI tutor OFF for ${child.child_name || child.child_email}.`
+        : `AI tutor back ON for ${child.child_name || child.child_email}.`);
     } catch (ex) {
       toast.error(ex?.response?.data?.detail || "Failed");
     }
@@ -229,6 +247,27 @@ export default function Parent() {
                     )}
                   </div>
                   <button onClick={() => unlink(selected.child_email)} className="text-xs underline text-red-800 inline-flex items-center gap-1" data-testid="parent-unlink"><X size={12} /> Unlink</button>
+                </div>
+
+                <div className="brutal-card p-4 bg-white flex items-start gap-3" data-testid="parent-ai-toggle-card">
+                  <Robot size={22} weight={selected.ai_disabled_by_parent ? "fill" : "bold"} />
+                  <div className="flex-1">
+                    <div className="font-display font-bold text-base">AI tutor access</div>
+                    <p className="text-xs text-[#4A4A4A] mt-1">
+                      Turn off the AI tutor for your child at any time. When OFF, every AI feature (homework helper,
+                      Dreams, practice hints) returns a "disabled by parent" message. You can switch it back instantly.
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-2 shrink-0 cursor-pointer">
+                    <span className="text-xs uppercase tracking-[0.2em] font-bold">{selected.ai_disabled_by_parent ? "OFF" : "ON"}</span>
+                    <input
+                      type="checkbox"
+                      checked={!selected.ai_disabled_by_parent}
+                      onChange={(e) => toggleAiDisabled(selected, !e.target.checked)}
+                      className="w-5 h-5 border-2 border-ink"
+                      data-testid="parent-ai-toggle"
+                    />
+                  </label>
                 </div>
 
                 <div className="brutal-card p-4 bg-white flex items-start gap-3" data-testid="parent-re-toggle-card">

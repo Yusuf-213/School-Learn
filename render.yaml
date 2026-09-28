@@ -1,0 +1,32 @@
+# Render (render.com) — Learnify one-file blueprint.
+# GitHub push → Render pulls this and provisions the backend web service.
+# The frontend deploys to Cloudflare Pages separately (see /app/frontend/public/_redirects).
+
+services:
+  - type: web
+    name: learnify-backend
+    runtime: python
+    plan: starter
+    autoDeploy: true
+    rootDir: backend
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT --workers 2
+    healthCheckPath: /api/curriculum
+    envVars:
+      # Populate these in the Render dashboard before first deploy.
+      - key: MONGO_URL
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: STRIPE_API_KEY
+        sync: false
+      - key: EMERGENT_LLM_KEY
+        sync: false
+      - key: REACT_APP_BACKEND_URL
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.9"

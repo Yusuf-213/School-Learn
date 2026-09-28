@@ -1016,6 +1016,12 @@ async def ai_help(req: HomeworkHelpRequest, current=Depends(get_current_user)):
     safeguard = mod_problem["action"] == "safeguard" or mod_msg["action"] == "safeguard"
 
     plan = await get_user_plan(current)
+    # Hard rule: parents can disable AI on their child. Block every tutor turn while the flag is on.
+    if current.get("ai_disabled_by_parent"):
+        raise HTTPException(
+            status_code=403,
+            detail="AI tutor is currently disabled by your parent/guardian. Ask them to re-enable it in the Parent Portal.",
+        )
     # Gate: daily limit applies
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     used_today = await db.generated_content.count_documents({
@@ -1032,6 +1038,25 @@ async def ai_help(req: HomeworkHelpRequest, current=Depends(get_current_user)):
 
     level = _grade_descriptor(req.grade_level)
     subject_line = f"Likely subject: {req.subject}.\n" if req.subject else ""
+    # Dream-aware tutoring: pull the student's most recent saved dream and weave it into hints/examples.
+    dream_line = ""
+    try:
+        dream_row = await db.dreams.find_one({"user_id": current["user_id"]}, {"_id": 0}, sort=[("updated_at", -1), ("created_at", -1)])
+        if dream_row:
+            dream_text = (dream_row.get("dream") or "").strip()
+            plan_json = dream_row.get("plan") or {}
+            focus_subjects = ", ".join((plan_json.get("subjects_to_focus") or [])[:4])
+            dream_line = (
+                "DREAM-AWARE TUTORING (subtle, natural): The student's saved dream is "
+                f"\"{dream_text}\"."
+                + (f" They're focusing on: {focus_subjects}." if focus_subjects else "")
+                + " When you build examples, similes or motivational nudges, LEAN into that dream where it "
+                "genuinely fits the maths/science/topic — don't force it. E.g. word problems can use the "
+                "dream's world (an aspiring surgeon → dosage maths; a game designer → probability & vectors; "
+                "a footballer → angles & percentages). Never break the Socratic rules to do this.\n"
+            )
+    except Exception:
+        dream_line = ""
     system = (
         "You are Learnify Homework Helper, a patient Socratic tutor for UK students.\n"
         "\n"
@@ -1063,6 +1088,7 @@ async def ai_help(req: HomeworkHelpRequest, current=Depends(get_current_user)):
         "where NN is your honest self-assessed certainty (0-100, round to nearest 5). "
         "The [[CONFIRM_STEP]] marker (if present) goes BEFORE the Confidence line.\n"
         + subject_line
+        + dream_line
     )
 
     session_id = req.session_id or f"help_{current['user_id']}_{uuid.uuid4().hex[:8]}"
@@ -2954,25 +2980,137 @@ async def delete_gcse_boundary(boundary_id: str, current=Depends(require_authed_
     return {"ok": True}
 
 
-async def _apply_boundaries(school_id: Optional[str], board: str, subject: str, tier: str, mark: int, max_marks: int) -> Optional[str]:
-    """Look up the latest uploaded boundary sheet and return the awarded grade — or None if
-    no sheet is available. Fallback to coarse percentage banding is the caller's job."""
-    if not school_id:
-        return None
-    row = await db.gcse_boundaries.find_one(
-        {"school_id": school_id, "board": board, "subject": subject, "tier": tier},
-        sort=[("uploaded_at", -1)],
+@api_router.post("/billing/redeem")
+async def billing_redeem_promo(body: dict, current=Depends(get_current_user)):
+    """Instant plan activation — a valid promo code grants the associated plan on the spot,
+    no Stripe checkout. If the promo has no plan_id we award `standard` for a year."""
+    code = (body.get("code") or "").strip().upper()
+    if not code:
+        raise HTTPException(status_code=400, detail="Enter a promo code")
+    promo = await resolve_promo_code(code)
+    if not promo:
+        raise HTTPException(status_code=400, detail="Invalid or expired promo code")
+    plan_id = (promo.get("plan_id") or "standard").lower()
+    if plan_id not in PLANS:
+        plan_id = "standard"
+    plan = PLANS[plan_id]
+    period = plan.get("period", "year")
+    # Lifetime codes (like HWA26) never expire.
+    is_lifetime = bool(promo.get("lifetime")) or code == "HWA26"
+    if is_lifetime:
+        expires_iso = (datetime.now(timezone.utc) + timedelta(days=365 * 50)).isoformat()
+    else:
+        days = 365 if period == "year" else 30
+        expires_iso = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    updates = {
+        "subscription_tier": plan_id,
+        "subscription_expires_at": expires_iso,
+        "subscription_period": period,
+        "subscription_source": "promo",
+        "subscription_promo_code": code,
+        "cancel_at_period_end": False,
+        "subscription_lifetime": is_lifetime,
+    }
+    await db.users.update_one({"user_id": current["user_id"]}, {"$set": updates, "$unset": {"canceled_at": "", "next_tier": ""}})
+    await increment_promo_usage(code)
+    await db.promo_redemptions.insert_one({
+        "redemption_id": f"red_{uuid.uuid4().hex[:10]}",
+        "code": code,
+        "user_id": current["user_id"],
+        "user_email": current.get("email"),
+        "plan_id": plan_id,
+        "lifetime": is_lifetime,
+        "at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {
+        "ok": True,
+        "plan_id": plan_id,
+        "plan_name": plan["name"],
+        "lifetime": is_lifetime,
+        "expires_at": expires_iso,
+        "message": f"Plan activated: {plan['name']}",
+    }
+
+
+# ====================== Parental AI Disable (safeguarding hard rule) ======================
+
+class AiDisableToggle(BaseModel):
+    ai_disabled: bool
+    reason: Optional[str] = None
+
+
+@api_router.patch("/students/{student_user_id}/ai-disabled")
+async def set_ai_disabled(student_user_id: str, req: AiDisableToggle, current=Depends(get_current_user)):
+    """Parent (linked+approved), SLT, or owner can toggle a student's AI-tutor access.
+    When ON, /api/ai/help returns 403 with an explanatory message."""
+    if is_owner(current):
+        pass
+    elif current.get("role") == ROLE_SCHOOL_ADMIN:
+        s = await db.users.find_one({"user_id": student_user_id}, {"_id": 0, "school_id": 1})
+        if not s or s.get("school_id") != current.get("school_id"):
+            raise HTTPException(status_code=403, detail="Not your school")
+    elif current.get("role") == ROLE_PARENT:
+        link = await db.parent_links.find_one({
+            "parent_user_id": current["user_id"], "child_user_id": student_user_id, "status": "approved",
+        })
+        if not link:
+            raise HTTPException(status_code=403, detail="Not linked to this child")
+    else:
+        raise HTTPException(status_code=403, detail="Not permitted")
+    updates = {
+        "ai_disabled_by_parent": bool(req.ai_disabled),
+        "ai_disabled_reason": req.reason,
+        "ai_disabled_at": datetime.now(timezone.utc).isoformat() if req.ai_disabled else None,
+        "ai_disabled_by": current.get("email"),
+    }
+    await db.users.update_one({"user_id": student_user_id}, {"$set": updates})
+    await db.ai_disable_audit.insert_one({
+        "audit_id": f"ai_{uuid.uuid4().hex[:10]}",
+        "student_user_id": student_user_id,
+        "actor_user_id": current["user_id"],
+        "actor_role": current.get("role"),
+        "ai_disabled": bool(req.ai_disabled),
+        "reason": req.reason,
+        "at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"ok": True, **updates}
+
+
+# ====================== Exam Board Scanner hook (daily) ======================
+# Cron-triggered agent that scans UK exam board publications for new practice items.
+# Actual scraping requires per-board integration; this hook exposes the collection + status.
+
+@api_router.get("/curriculum/questions")
+async def list_scanned_questions(board: Optional[str] = None, subject: Optional[str] = None,
+                                  limit: int = 100, current=Depends(get_current_user)):
+    q = {}
+    if board: q["board"] = board
+    if subject: q["subject"] = subject
+    rows = await db.exam_questions.find(q, {"_id": 0}).sort("scanned_at", -1).limit(min(max(limit, 1), 500)).to_list(500)
+    status = await db.exam_scanner_status.find_one({"_id": "scanner"}, {"_id": 0}) or {}
+    return {"count": len(rows), "items": rows, "scanner": status}
+
+
+@api_router.post("/curriculum/scanner/run")
+async def run_exam_scanner(current=Depends(get_current_user)):
+    """Trigger the exam-board scanner. In production this is invoked by a cron worker; this
+    endpoint lets the owner run it on demand or a scheduled job hit it via bearer token."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    # NOTE: Actual board-scraping integration is queued for a follow-up iteration — this stub
+    # records a run so we have visibility. The AI-agent hook plugs in here.
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.exam_scanner_status.update_one(
+        {"_id": "scanner"},
+        {"$set": {"last_run_at": now_iso, "last_run_by": current.get("email"),
+                   "boards_supported": ["aqa", "edexcel", "ocr", "eduqas"],
+                   "status": "queued", "note": "AI agent hook stub — plug scraping module here."}},
+        upsert=True,
     )
-    if not row:
-        return None
-    # Normalise mark to the sheet's max scale if different.
-    scaled_mark = mark if max_marks == row.get("max_marks") else round(mark * row["max_marks"] / max_marks) if max_marks else mark
-    # Rows are sorted desc by min_mark; find the first threshold met.
-    sorted_rows = sorted(row.get("rows") or [], key=lambda r: int(r.get("min_mark", 0)), reverse=True)
-    for r in sorted_rows:
-        if scaled_mark >= int(r["min_mark"]):
-            return r["grade"]
-    return "U"
+    return {"ok": True, "queued_at": now_iso}
+
+
+
 
 
 # ====================== Mental-maths streak (KS1/KS2 reward loop) ======================
