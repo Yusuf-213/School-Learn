@@ -4,6 +4,17 @@ Learnify is a UK school management platform — preschool through university —
 covering AI tutoring, lesson planning, homework/assignment grading, parent portal,
 Stripe billing, safeguarding & UK GDPR compliance.
 
+## Iteration 26 (2026-03-XX) — Removed `emergentintegrations` entirely for public-repo deploy
+
+- Deleted `backend/emergentintegrations/` folder.
+- Created `backend/_compat.py` (~230 lines) — drop-in `LlmChat`, `UserMessage`, `ImageContent`, `StripeCheckout`, `CheckoutSessionRequest/Response/StatusResponse` implemented against **PyPI-standard** packages only: `openai` (with `base_url` → Emergent OpenAI-compatible LLM proxy) and `stripe`.
+- Two import lines in `server.py` updated:
+  - `from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent` → `from _compat import LlmChat, UserMessage, ImageContent`
+  - `from emergentintegrations.payments.stripe.checkout import (...)` → `from _compat import (...)`
+- `backend/requirements.txt` cleaned: dropped `litellm`, `aiohttp`, `google-generativeai`, `google-genai`, `Pillow`, `emergentintegrations` and the private CloudFront index. Now needs only stock PyPI: `openai>=1.40.0`, `stripe>=8.0.0,<15` plus existing deps.
+- Verified locally: backend restart → `Application startup complete`, `/api/curriculum` → 200. `grep emergentintegrations server.py` returns 0 matches.
+
+
 ## Iteration 25 (2026-03-XX) — Render deploy hardening · Vendored emergentintegrations
 
 - **Vendored** `emergentintegrations` (~200KB, 15 files) directly into `backend/emergentintegrations/` — Render's public pip can't reach the private Emergent index, so the package now ships in the repo.

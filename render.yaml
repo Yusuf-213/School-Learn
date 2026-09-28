@@ -1,8 +1,6 @@
 # Render Blueprint — Learnify backend deploys straight from GitHub.
 #
 # CRITICAL for boot:
-#   • emergentintegrations is on Emergent's private index, not PyPI — the buildCommand below
-#     adds `--extra-index-url` so pip can find it.
 #   • server.py does `os.environ['KEY']` (strict) for the required secrets below — if ANY are
 #     unset in Render's Environment tab, boot crashes with KeyError. Set them BEFORE first deploy.
 
