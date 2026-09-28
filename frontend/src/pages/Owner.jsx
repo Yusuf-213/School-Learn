@@ -9,6 +9,66 @@ import PaymentLinksPanel from "./owner/PaymentLinksPanel";
 import DpaAcceptancesPanel from "./owner/DpaAcceptancesPanel";
 import GuardianAuditPanel from "./owner/GuardianAuditPanel";
 
+function PromoAnalyticsCard() {
+  const [data, setData] = useState(null);
+  useEffect(() => { api.get("/owner/promo-analytics").then(({ data }) => setData(data)).catch(() => {}); }, []);
+  if (!data) return null;
+  return (
+    <section className="brutal-card p-5 bg-butter" data-testid="promo-analytics-card">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-display font-extrabold text-xl">Promo analytics</h3>
+        <div className="text-xs text-[#4A4A4A]">{data.total_redemptions} total redemptions · {data.unique_codes_used} codes used</div>
+      </div>
+      <div className="grid sm:grid-cols-3 gap-3 mb-4">
+        <div className="brutal-card p-3 bg-mint">
+          <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">Lifetime</div>
+          <div className="font-display font-black text-3xl" data-testid="promo-lifetime-count">{data.lifetime_count}</div>
+        </div>
+        <div className="brutal-card p-3 bg-white">
+          <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">One-year</div>
+          <div className="font-display font-black text-3xl" data-testid="promo-oneyear-count">{data.one_year_count}</div>
+        </div>
+        <div className="brutal-card p-3 bg-lavender">
+          <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">Split</div>
+          <div className="font-display font-black text-xl mt-1">
+            {data.total_redemptions ? Math.round(100 * data.lifetime_count / data.total_redemptions) : 0}% lifetime
+          </div>
+        </div>
+      </div>
+      {data.top_codes.length === 0 ? (
+        <div className="text-sm text-[#4A4A4A]">No redemptions yet.</div>
+      ) : (
+        <div className="overflow-x-auto brutal-card bg-white">
+          <table className="min-w-full text-sm">
+            <thead className="bg-butter border-b-2 border-ink">
+              <tr>
+                <th className="text-left p-3 font-display">Code</th>
+                <th className="text-right p-3 font-display">Redemptions</th>
+                <th className="text-right p-3 font-display">Lifetime</th>
+                <th className="text-right p-3 font-display">1-year</th>
+                <th className="text-right p-3 font-display">Conversion</th>
+                <th className="text-left p-3 font-display">Last used</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.top_codes.map((c) => (
+                <tr key={c.code} className="border-t border-ink/20" data-testid={`promo-row-${c.code}`}>
+                  <td className="p-3 font-mono font-bold">{c.code}{c.is_lifetime_code && <span className="ml-2 text-[10px] px-1.5 py-0.5 border-2 border-ink rounded bg-mint">LIFE</span>}</td>
+                  <td className="p-3 text-right font-mono">{c.redemptions}</td>
+                  <td className="p-3 text-right font-mono">{c.lifetime}</td>
+                  <td className="p-3 text-right font-mono">{c.one_year}</td>
+                  <td className="p-3 text-right font-mono">{c.conversion != null ? `${Math.round(c.conversion * 100)}%` : "—"}</td>
+                  <td className="p-3 text-xs text-[#4A4A4A]">{c.last_at ? new Date(c.last_at).toLocaleDateString() : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function Owner() {
   const { user } = useAuth();
   const [stats, setStats] = useState(null);
@@ -174,6 +234,7 @@ export default function Owner() {
             </section>
 
             <BusinessPanel />
+            <PromoAnalyticsCard />
           </>
         )}
 

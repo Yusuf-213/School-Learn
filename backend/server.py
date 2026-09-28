@@ -1522,6 +1522,7 @@ class HomeworkCreate(BaseModel):
     exam_board: Optional[Literal["aqa", "edexcel", "ocr", "eduqas"]] = None
     series: Optional[str] = None                        # e.g. "June 2025"
     tier: Optional[Literal["foundation", "higher", "single"]] = None
+    apply_dream_theme: bool = False                     # if True, students see the brief reworded around their saved dream
 
 
 class AssignmentToggle(BaseModel):
@@ -2483,6 +2484,7 @@ async def create_homework(req: HomeworkCreate, current=Depends(require_authed_ro
         "exam_board": req.exam_board,
         "series": req.series,
         "tier": req.tier,
+        "apply_dream_theme": bool(req.apply_dream_theme),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.homework.insert_one(doc)
@@ -3092,22 +3094,178 @@ async def list_scanned_questions(board: Optional[str] = None, subject: Optional[
 
 
 @api_router.post("/curriculum/scanner/run")
-async def run_exam_scanner(current=Depends(get_current_user)):
-    """Trigger the exam-board scanner. In production this is invoked by a cron worker; this
-    endpoint lets the owner run it on demand or a scheduled job hit it via bearer token."""
+async def run_exam_scanner(current=Depends(get_current_user), boards: Optional[str] = None):
+    """Run the exam-board question generator. Uses the Emergent LLM key to draft fresh
+    practice items per (board × subject) and writes them into db.exam_questions.
+    Set boards="aqa,edexcel" to limit scope. Owner-only. Idempotent per day: skips a board+subject
+    pair already scanned today."""
     if not is_owner(current):
         raise HTTPException(status_code=403, detail="Owner only")
-    # NOTE: Actual board-scraping integration is queued for a follow-up iteration — this stub
-    # records a run so we have visibility. The AI-agent hook plugs in here.
+    from curriculum_data import GCSE
     now_iso = datetime.now(timezone.utc).isoformat()
+    today = datetime.now(timezone.utc).date().isoformat()
+    board_ids = (boards or "aqa,edexcel,ocr,eduqas").split(",")
+    core_subjects = ["Mathematics", "English Language", "Biology", "Chemistry", "Physics"]
+    inserted = 0
+    skipped = 0
+    errors = []
     await db.exam_scanner_status.update_one(
         {"_id": "scanner"},
-        {"$set": {"last_run_at": now_iso, "last_run_by": current.get("email"),
-                   "boards_supported": ["aqa", "edexcel", "ocr", "eduqas"],
-                   "status": "queued", "note": "AI agent hook stub — plug scraping module here."}},
+        {"$set": {"last_run_at": now_iso, "last_run_by": current.get("email"), "status": "running"}},
         upsert=True,
     )
-    return {"ok": True, "queued_at": now_iso}
+    for board in [b.strip() for b in board_ids if b.strip()]:
+        for subject in core_subjects:
+            already = await db.exam_questions.count_documents({
+                "board": board, "subject": subject, "scanned_date": today,
+            })
+            if already:
+                skipped += 1
+                continue
+            try:
+                sys = (
+                    f"You are a UK exam-board question generator. Board: {board.upper()}. Subject: {subject}. "
+                    f"Produce 5 fresh, exam-style GCSE 9-1 practice questions inspired by the board's public "
+                    f"sample-assessment materials — do NOT copy any real paper verbatim. Vary difficulty."
+                )
+                ask = (
+                    "Return STRICT JSON: {\"questions\":[{\"question\":\"…\",\"marks\":<int>,"
+                    "\"topic\":\"…\",\"grade_target\":\"4|5|6|7|8|9\",\"answer\":\"brief mark scheme\"}]}. "
+                    "No prose outside JSON."
+                )
+                chat = LlmChat(
+                    api_key=EMERGENT_LLM_KEY,
+                    session_id=f"scan_{board}_{subject}_{today}",
+                    system_message=sys,
+                ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+                resp = await chat.send_message(UserMessage(text=ask))
+                parsed = extract_json(resp) or {}
+                for q in (parsed.get("questions") or [])[:10]:
+                    doc = {
+                        "question_id": f"q_{uuid.uuid4().hex[:10]}",
+                        "board": board,
+                        "subject": subject,
+                        "topic": q.get("topic"),
+                        "question": q.get("question"),
+                        "marks": q.get("marks"),
+                        "grade_target": q.get("grade_target"),
+                        "answer": q.get("answer"),
+                        "source": "ai_generated",
+                        "scanned_at": now_iso,
+                        "scanned_date": today,
+                    }
+                    await db.exam_questions.insert_one(doc)
+                    inserted += 1
+            except Exception as e:
+                errors.append({"board": board, "subject": subject, "error": str(e)[:200]})
+    status = {
+        "last_run_at": now_iso,
+        "last_completed_at": datetime.now(timezone.utc).isoformat(),
+        "inserted": inserted,
+        "skipped_already_today": skipped,
+        "boards": [b.strip() for b in board_ids if b.strip()],
+        "subjects": core_subjects,
+        "errors": errors,
+        "status": "complete",
+    }
+    await db.exam_scanner_status.update_one({"_id": "scanner"}, {"$set": status}, upsert=True)
+    return {"ok": True, **status}
+
+
+# ====================== Promo analytics (owner) ======================
+
+@api_router.get("/owner/promo-analytics")
+async def promo_analytics(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    reds = await db.promo_redemptions.find({}, {"_id": 0}).to_list(5000)
+    codes = await db.promo_codes.find({}, {"_id": 0}).to_list(500)
+    codes_by = {c["code"]: c for c in codes}
+    by_code: dict = {}
+    lifetime_count = 0
+    one_year_count = 0
+    for r in reds:
+        code = (r.get("code") or "").upper()
+        by_code.setdefault(code, {"code": code, "redemptions": 0, "lifetime": 0, "one_year": 0,
+                                     "plans": {}, "first_at": None, "last_at": None})
+        e = by_code[code]
+        e["redemptions"] += 1
+        if r.get("lifetime"):
+            e["lifetime"] += 1
+            lifetime_count += 1
+        else:
+            e["one_year"] += 1
+            one_year_count += 1
+        plan = r.get("plan_id") or "unknown"
+        e["plans"][plan] = e["plans"].get(plan, 0) + 1
+        at = r.get("at")
+        if at and (e["first_at"] is None or at < e["first_at"]): e["first_at"] = at
+        if at and (e["last_at"] is None or at > e["last_at"]): e["last_at"] = at
+    for e in by_code.values():
+        meta = codes_by.get(e["code"], {})
+        e["is_lifetime_code"] = bool(meta.get("lifetime")) or e["code"] == "HWA26"
+        e["max_uses"] = meta.get("max_uses")
+        e["conversion"] = (e["redemptions"] / meta["max_uses"]) if meta.get("max_uses") else None
+    top = sorted(by_code.values(), key=lambda x: x["redemptions"], reverse=True)
+    return {
+        "total_redemptions": len(reds),
+        "lifetime_count": lifetime_count,
+        "one_year_count": one_year_count,
+        "unique_codes_used": len(by_code),
+        "top_codes": top[:20],
+    }
+
+
+# ====================== Dream-themed homework rewording ======================
+
+@api_router.get("/student/homework/{homework_id}/themed")
+async def student_dream_themed_homework(homework_id: str, current=Depends(get_current_user)):
+    """When a teacher set a homework with apply_dream_theme=true, this endpoint returns the
+    original brief reworded to sit inside the student's Dream world. Cached per (homework, student)
+    so we only spend LLM budget once. Falls back to the original brief when the student has no dream."""
+    hw = await db.homework.find_one({"homework_id": homework_id}, {"_id": 0})
+    if not hw:
+        raise HTTPException(status_code=404, detail="Homework not found")
+    if not hw.get("apply_dream_theme"):
+        return {"applied": False, "reason": "not_themed", "original": hw.get("instructions"), "themed": hw.get("instructions")}
+    if current.get("ai_disabled_by_parent"):
+        return {"applied": False, "reason": "ai_disabled", "original": hw.get("instructions"), "themed": hw.get("instructions")}
+    dream = await db.dreams.find_one({"user_id": current["user_id"]}, {"_id": 0},
+                                       sort=[("updated_at", -1), ("created_at", -1)])
+    if not dream or not (dream.get("dream") or "").strip():
+        return {"applied": False, "reason": "no_dream", "original": hw.get("instructions"), "themed": hw.get("instructions")}
+    cache_key = f"{homework_id}:{current['user_id']}:{dream.get('dream_id')}"
+    cached = await db.homework_themed_cache.find_one({"cache_key": cache_key}, {"_id": 0})
+    if cached:
+        return {"applied": True, "reason": "cached", "original": hw.get("instructions"),
+                 "themed": cached.get("themed"), "dream": dream.get("dream")}
+    try:
+        sys = (
+            f"You reword UK school homework so it sits inside the student's dream world, WITHOUT "
+            f"changing the underlying learning task. Subject: {hw.get('subject','')}. "
+            f"Student dream: \"{dream.get('dream','')}\". Rules: preserve every question, every "
+            f"quantity, every correct answer path. Only reword the framing/wrapping so it feels "
+            f"personal. Keep it concise. If the dream doesn't fit a specific question, leave that "
+            f"question's numbers/text alone."
+        )
+        chat = LlmChat(api_key=EMERGENT_LLM_KEY,
+                        session_id=f"theme_{homework_id}_{current['user_id']}",
+                        system_message=sys).with_model("anthropic", "claude-sonnet-4-5-20250929")
+        resp = await chat.send_message(UserMessage(text=f"Original brief:\n{hw.get('instructions','')}\n\nReword it now."))
+        themed_text = (resp or "").strip() or hw.get("instructions")
+    except Exception as e:
+        logging.exception("dream-theme reword failed")
+        return {"applied": False, "reason": f"ai_error:{str(e)[:60]}", "original": hw.get("instructions"), "themed": hw.get("instructions")}
+    await db.homework_themed_cache.insert_one({
+        "cache_key": cache_key,
+        "homework_id": homework_id,
+        "student_user_id": current["user_id"],
+        "dream_id": dream.get("dream_id"),
+        "themed": themed_text,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"applied": True, "reason": "generated", "original": hw.get("instructions"),
+             "themed": themed_text, "dream": dream.get("dream")}
 
 
 

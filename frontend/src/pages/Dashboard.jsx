@@ -100,6 +100,43 @@ function DetentionAlert() {
 }
 
 
+function AiOffBanner() {
+  const { user } = useAuth();
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!user?.ai_disabled_by_parent) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [user?.ai_disabled_by_parent]);
+  if (!user?.ai_disabled_by_parent) return null;
+  const since = user?.ai_disabled_at ? new Date(user.ai_disabled_at).getTime() : null;
+  const elapsedMs = since ? now - since : 0;
+  const h = Math.floor(elapsedMs / 3600000);
+  const m = Math.floor((elapsedMs % 3600000) / 60000);
+  const s = Math.floor((elapsedMs % 60000) / 1000);
+  return (
+    <div className="brutal-card p-5 bg-lavender" data-testid="ai-off-banner">
+      <div className="flex items-start gap-3">
+        <ShieldCheck size={24} weight="duotone" />
+        <div className="flex-1">
+          <div className="text-xs uppercase tracking-[0.2em] font-bold mb-1">AI tutor paused</div>
+          <h3 className="font-display font-bold text-lg">Your parent/guardian has switched the AI tutor off for now.</h3>
+          <p className="text-sm mt-1">
+            You can still browse subjects, do practice drills, and hand in homework. When they turn it back on
+            in the Parent Portal, everything reactivates instantly — no wait time on our end.
+          </p>
+          {since && (
+            <p className="text-xs text-[#4A4A4A] mt-2" data-testid="ai-off-timer">
+              Paused for {h > 0 ? `${h}h ` : ""}{m}m {s}s
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 export default function Dashboard() {
   const { user, refreshUser } = useAuth();
   const [stats, setStats] = useState({ topics_started: 0, topics_completed: 0 });
@@ -126,6 +163,7 @@ export default function Dashboard() {
     <AppLayout>
       <div className="max-w-6xl space-y-10">
         <MagicLinkBanner />
+        <AiOffBanner />
         <DetentionAlert />
         {/* Header */}
         <div className="flex flex-wrap items-end justify-between gap-4 animate-fade-up">

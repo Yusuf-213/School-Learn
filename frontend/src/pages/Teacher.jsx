@@ -368,7 +368,7 @@ function Section({ title, duration, children }) {
 function HomeworkTab() {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ title: "", subject: "Mathematics", class_id: "", instructions: "", max_score: 100, is_assignment: false, due_date: "" });
+  const [form, setForm] = useState({ title: "", subject: "Mathematics", class_id: "", instructions: "", max_score: 100, is_assignment: false, due_date: "", apply_dream_theme: false });
   const [analysis, setAnalysis] = useState(null);
   const [analyzingId, setAnalyzingId] = useState(null);
   const [toggling, setToggling] = useState(null);
@@ -386,7 +386,7 @@ function HomeworkTab() {
       const { data } = await api.post("/teacher/homework", payload);
       setItems((it) => [data, ...it]);
       setOpen(false);
-      setForm({ title: "", subject: "Mathematics", class_id: "", instructions: "", max_score: 100, is_assignment: false, due_date: "" });
+      setForm({ title: "", subject: "Mathematics", class_id: "", instructions: "", max_score: 100, is_assignment: false, due_date: "", apply_dream_theme: false });
       toast.success(data.is_assignment ? "Assignment set." : "Homework set.");
     } catch (ex) {
       toast.error(ex.response?.data?.detail || "Failed");
@@ -471,6 +471,15 @@ function HomeworkTab() {
               </span>
             </label>
           </div>
+          <label className="flex items-start gap-2 border-2 border-ink rounded-md p-3 bg-lavender cursor-pointer" data-testid="hw-dream-theme-toggle">
+            <input type="checkbox" checked={!!form.apply_dream_theme}
+              onChange={(e) => setForm({ ...form, apply_dream_theme: e.target.checked })}
+              data-testid="hw-dream-theme-checkbox" className="mt-1" />
+            <span className="text-sm">
+              <strong>Auto-theme brief around each student's Dream</strong>
+              <span className="block text-xs text-[#4A4A4A]">When a student opens this homework, AI reworks the framing to sit inside their saved dream — same questions, same maths, personal wrapping. One-off LLM cost per student, cached after.</span>
+            </span>
+          </label>
           <div className="flex gap-2">
             <button type="button" onClick={() => setOpen(false)} className="brutal-btn bg-white">Cancel</button>
             <button type="submit" data-testid="hw-create-btn" className="brutal-btn bg-ink text-white flex-1">

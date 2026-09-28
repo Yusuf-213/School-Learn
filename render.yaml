@@ -1,6 +1,10 @@
-# Render (render.com) — Learnify one-file blueprint.
-# GitHub push → Render pulls this and provisions the backend web service.
-# The frontend deploys to Cloudflare Pages separately (see /app/frontend/public/_redirects).
+# Render Blueprint — Learnify backend deploys straight from GitHub.
+#
+# CRITICAL for boot:
+#   • emergentintegrations is on Emergent's private index, not PyPI — the buildCommand below
+#     adds `--extra-index-url` so pip can find it.
+#   • server.py does `os.environ['KEY']` (strict) for the required secrets below — if ANY are
+#     unset in Render's Environment tab, boot crashes with KeyError. Set them BEFORE first deploy.
 
 services:
   - type: web
@@ -9,24 +13,53 @@ services:
     plan: starter
     autoDeploy: true
     rootDir: backend
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    buildCommand: >-
+      pip install --upgrade pip &&
+      pip install --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ -r requirements.txt
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT --workers 2
     healthCheckPath: /api/curriculum
     envVars:
-      # Populate these in the Render dashboard before first deploy.
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+      # ============ REQUIRED — server.py refuses to boot without these ============
       - key: MONGO_URL
         sync: false
       - key: DB_NAME
         sync: false
-      - key: CORS_ORIGINS
-        sync: false
       - key: JWT_SECRET
-        sync: false
-      - key: STRIPE_API_KEY
         sync: false
       - key: EMERGENT_LLM_KEY
         sync: false
-      - key: REACT_APP_BACKEND_URL
+      - key: PUBLIC_APP_URL
+        sync: false                # e.g. https://learn.your-school.uk (no trailing slash)
+      - key: DPA_ENCRYPTION_KEY
+        sync: false                # 32-byte Fernet key — generate with `python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())"`
+      - key: OWNER_EMAIL
         sync: false
-      - key: PYTHON_VERSION
-        value: "3.11.9"
+      - key: OWNER_USERNAME
+        sync: false
+      - key: OWNER_PASSWORD
+        sync: false
+      - key: TESTER_EMAIL
+        sync: false
+      - key: TESTER_USERNAME
+        sync: false
+      - key: TESTER_PASSWORD
+        sync: false
+      - key: TESTER_SCHOOL_ID
+        sync: false
+      - key: TESTER_SCHOOL_DOMAIN
+        sync: false
+
+      # ============ OPTIONAL — server.py reads via .get() with sensible defaults ============
+      - key: CORS_ORIGINS
+        sync: false                # comma-separated: https://learnify.pages.dev,https://learn.your-school.uk
+      - key: STRIPE_API_KEY
+        sync: false                # sk_live_… for prod, sk_test_… for staging
+      - key: CO_OWNERS_JSON
+        sync: false                # JSON array — leave empty (`[]`) if not used
+      - key: MS_CLIENT_ID
+        sync: false                # only if Microsoft SSO is wanted
+      - key: MS_TENANT_ID
+        value: common
