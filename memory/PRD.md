@@ -4,6 +4,16 @@ Learnify is a UK school management platform — preschool through university —
 covering AI tutoring, lesson planning, homework/assignment grading, parent portal,
 Stripe billing, safeguarding & UK GDPR compliance.
 
+## Iteration 25 (2026-03-XX) — Render deploy hardening · Vendored emergentintegrations
+
+- **Vendored** `emergentintegrations` (~200KB, 15 files) directly into `backend/emergentintegrations/` — Render's public pip can't reach the private Emergent index, so the package now ships in the repo.
+- **`backend/requirements.txt` cleaned**: removed `emergentintegrations==0.1.2` and the `--extra-index-url` line; replaced with the vendored package's transitive deps (`openai==1.99.9`, `aiohttp`, `google-generativeai`, `google-genai`, `Pillow`, `stripe<15,>=13`, `litellm` from CDN wheel URL). Added `httpx>=0.27.0` and `pyotp>=2.9.0` which were previously missing but imported by `server.py`.
+- **`backend/server.py`** — added `if __name__ == "__main__"` uvicorn boot block so Render's default `python server.py` start command actually launches uvicorn on `$PORT`.
+- **Root fallbacks** added so Render deploys regardless of how the service is configured: `/requirements.txt` (delegates to backend), `/Procfile`, `/runtime.txt`, `/.python-version` (pins Python 3.11.9 vs. Render's default 3.14).
+- **`render.yaml`** startCommand simplified to `python server.py`; buildCommand no longer needs the private index.
+- Verified locally: `pip uninstall emergentintegrations` then restart backend → `Application startup complete`, `/api/curriculum` returns 200. The vendored copy is imported from `backend/emergentintegrations/`.
+
+
 ## Iteration 24 (2026-03-01) — Boundary-aware grades · RE editor · Mental-maths streak · Swimming removed
 
 ### Boundary-aware term grades
