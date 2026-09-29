@@ -15,6 +15,8 @@ import {
   Square,
   CalendarBlank,
   CircleNotch,
+  FilePdf,
+  ArrowClockwise,
 } from "@phosphor-icons/react";
 
 // ---- helpers --------------------------------------------------------------
@@ -557,6 +559,44 @@ export default function Compliance() {
   const [alerts, setAlerts] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [downloading, setDownloading] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+
+  const downloadPdf = async () => {
+    setDownloading(true);
+    try {
+      const resp = await api.get("/compliance/export/pdf", { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `learnify-compliance-${new Date().toISOString().slice(0, 10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "PDF export failed");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const runVerify = async () => {
+    setVerifying(true);
+    try {
+      const { data } = await api.post("/compliance/run-verify-now");
+      const parts = [];
+      if (data.marked_inactive?.length) parts.push(`${data.marked_inactive.length} DPF lapsed`);
+      if (data.tra_flagged?.length) parts.push(`${data.tra_flagged.length} TRAs > 12mo`);
+      if (data.emails_sent) parts.push(`${data.emails_sent} email(s) sent`);
+      toast.success(parts.length ? `Sweep complete — ${parts.join(" · ")}` : "Sweep complete — all clean");
+      await loadAll();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Verify failed");
+    } finally {
+      setVerifying(false);
+    }
+  };
 
   const loadAll = async () => {
     try {
@@ -612,11 +652,34 @@ export default function Compliance() {
       <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-6" data-testid="compliance-page">
         {/* Header */}
         <header className="brutal-card p-5 bg-butter">
-          <div className="flex items-center gap-3 mb-2">
-            <ShieldCheck size={28} weight="fill" />
-            <div>
-              <div className="text-xs uppercase tracking-widest font-bold text-slate-700">UK GDPR</div>
-              <h1 className="font-display font-black text-3xl md:text-4xl">Compliance Dashboard</h1>
+          <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
+            <div className="flex items-center gap-3">
+              <ShieldCheck size={28} weight="fill" />
+              <div>
+                <div className="text-xs uppercase tracking-widest font-bold text-slate-700">UK GDPR</div>
+                <h1 className="font-display font-black text-3xl md:text-4xl">Compliance Dashboard</h1>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={runVerify}
+                disabled={verifying}
+                data-testid="run-verify-btn"
+                className="brutal-btn bg-white hover:bg-mint text-sm inline-flex items-center gap-1.5 py-2 px-3"
+                title="Manually sweep DPF certs & TRAs, email owner on drift"
+              >
+                <ArrowClockwise size={14} weight="bold" className={verifying ? "animate-spin" : ""} />
+                {verifying ? "Running…" : "Run verify now"}
+              </button>
+              <button
+                onClick={downloadPdf}
+                disabled={downloading}
+                data-testid="download-pdf-btn"
+                className="brutal-btn bg-ink text-white hover:bg-slate-800 text-sm inline-flex items-center gap-1.5 py-2 px-3"
+              >
+                <FilePdf size={14} weight="bold" />
+                {downloading ? "Preparing…" : "Download PDF"}
+              </button>
             </div>
           </div>
           <p className="text-sm text-slate-800 max-w-3xl">

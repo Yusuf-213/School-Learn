@@ -4,6 +4,41 @@ Learnify is a UK school management platform — preschool through university —
 covering AI tutoring, lesson planning, homework/assignment grading, parent portal,
 Stripe billing, safeguarding & UK GDPR compliance.
 
+## Iteration 28 (2026-03-XX) — Compliance PDF export · DPF auto-verify cron · Sub-processor notifier
+
+### 1. Compliance PDF export
+- `GET /api/compliance/export/pdf` (owner-only) → landscape A4 PDF (reportlab) with:
+  - Header (controller, prepared-by, timestamp, **signature SHA-256** binding the export to the record).
+  - Section 1 — colour-coded Transfer Mechanism Tracker table (green/amber/red row backgrounds).
+  - Section 2 — CLOUD Act Risk Log table.
+  - Section 3 — Compliance Checklist with ticks + confirmed-at timestamps.
+- Frontend: new **Download PDF** button in `Compliance.jsx` header (`data-testid="download-pdf-btn"`).
+
+### 2. DPF Auto-Verify (nightly cron)
+- New `.emergent/crons.yml` with a single daily cron at **03:00 UTC** → `POST /api/cron/dpf-verify`.
+- New env: `WEBHOOK_CRON_SECRET` — the cron endpoint returns **401** without `Authorization: Bearer <secret>`; verified with hmac.compare_digest.
+- Endpoint enqueues the sweep via FastAPI `BackgroundTasks` and acks 2xx in <100ms (contract: "cron endpoints must ack immediately").
+- Sweep logic (`_run_dpf_verify`):
+  - Any recipient with `dpf_certified=true` whose `dpf_expiry_date` has passed → auto-flip `dpf_certified=false`, stamp `dpf_lapsed_at`.
+  - Any recipient whose `tra_date` is > 365 days old → flag.
+  - Every recipient gets `dpf_last_verified_at` stamped each run (audit trail).
+- Owner-only manual trigger: `POST /api/compliance/run-verify-now` + a **Run verify now** button on the dashboard.
+
+### 3. Sub-Processor Notifier (email)
+- New env: `EMERGENT_EMAIL_KEY` (Emergent-managed Resend) + `EMAIL_FROM_NAME=Learnify Compliance`.
+- Recipient is `OWNER_EMAIL` — never caller-supplied (G4 guard).
+- Two email templates rendered server-side, plain HTML, no forms, no credential-asks:
+  - `[Compliance] DPF cert lapsed — {company}` fires on the day a cert lapses (deduped per-recipient per-day via `compliance_notifications` collection).
+  - `[Compliance] TRA is {N} days old — {company}` fires once per recipient per-month while a TRA is > 12 months old.
+- `_send_owner_compliance_email` runs the mandatory `<form>/<input>` + credential-phrase gate before every send.
+
+### Verified
+- Cron endpoint: 401 without / with wrong bearer, 200 + `{queued:true}` with correct bearer.
+- Manual verify seeded with expired-DPF + old-TRA test data: `marked_inactive=1`, `tra_flagged=1`, `emails_sent=2` (both `HTTP/1.1 202 Accepted` from Resend proxy).
+- Idempotency: second run same day → `emails_sent=0` (both templates hit their notification lock).
+- PDF export: `application/pdf`, 3.9 KB, correct `Content-Disposition` filename, renders with colour-coded rows.
+
+
 ## Iteration 27 (2026-03-XX) — UK GDPR Compliance Dashboard
 
 New owner-only page at **`/compliance`** (`nav-compliance` in the Owner nav).

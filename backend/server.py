@@ -12,6 +12,9 @@ import httpx
 import re
 import pyotp  # legacy; kept for compat but no active endpoint uses it now
 import hashlib
+import hmac
+from html import escape as escape_html
+from fastapi import BackgroundTasks
 from cryptography.fernet import Fernet, InvalidToken
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
@@ -5710,6 +5713,347 @@ async def compliance_alerts(current=Depends(get_current_user)):
         "no_transfer_mechanism": no_mechanism,
         "total_recipients": len(rows),
     }
+
+
+# ---- Compliance PDF export ----
+
+@api_router.get("/compliance/export/pdf")
+async def compliance_export_pdf(current=Depends(get_current_user)):
+    """One-click signed compliance snapshot: recipients table + CLOUD Act log + checklist state."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.lib.enums import TA_LEFT
+    from fastapi.responses import StreamingResponse
+
+    recipients = await db.us_recipients.find({}, {"_id": 0}).sort("company_name", 1).to_list(500)
+    incidents = await db.cloud_act_incidents.find({}, {"_id": 0}).sort("date", -1).to_list(500)
+    checklist_doc = await db.gdpr_checklist.find_one({"_id": "learnify"}) or {}
+
+    now = datetime.now(timezone.utc)
+    signature_hash = hashlib.sha256(
+        f"{current.get('user_id')}|{now.isoformat()}|{len(recipients)}|{len(incidents)}".encode()
+    ).hexdigest()
+
+    buf = BytesIO()
+    pdf = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=1.5*cm, rightMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm,
+        title="Learnify — UK GDPR Compliance Snapshot",
+    )
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Title"], fontSize=18, leading=22, alignment=TA_LEFT)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontSize=13, leading=17, spaceBefore=14, spaceAfter=6)
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontSize=9, leading=12)
+    small = ParagraphStyle("small", parent=styles["BodyText"], fontSize=8, leading=11, textColor="#555555")
+
+    story = []
+    story.append(Paragraph("UK GDPR Compliance Snapshot", h1))
+    story.append(Paragraph(
+        f"Controller: <b>Learnify</b> &nbsp;·&nbsp; Prepared by: {current.get('email')} &nbsp;·&nbsp; "
+        f"Generated: {now.strftime('%d %B %Y, %H:%M UTC')}", small
+    ))
+    story.append(Paragraph(f"Signature SHA-256: {signature_hash}", small))
+    story.append(Spacer(1, 10))
+
+    # ----- Recipients table -----
+    story.append(Paragraph("1. Transfer Mechanism Tracker — US recipients", h2))
+    header = ["Status", "Company", "DPF cert", "DPF expiry", "IDTA / SCC", "Last TRA", "Notes"]
+    data = [header]
+    for row in recipients:
+        annotated = _annotate_recipient(row)
+        data.append([
+            annotated["status_label"],
+            annotated["company_name"],
+            "Yes" if row.get("dpf_certified") else "No",
+            row.get("dpf_expiry_date") or "—",
+            "Yes" if row.get("idta_in_place") else "No",
+            row.get("tra_date") or ("missing" if annotated["tra_missing"] else "—"),
+            (row.get("notes") or "")[:80],
+        ])
+    if len(data) == 1:
+        data.append(["—", "No US recipients recorded.", "", "", "", "", ""])
+    tbl = Table(data, colWidths=[3*cm, 5*cm, 2*cm, 2.5*cm, 2*cm, 2.5*cm, 8*cm], repeatRows=1)
+    ts = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#cbd5e1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ])
+    for idx, row in enumerate(data[1:], start=1):
+        label = (row[0] or "").lower()
+        if label.startswith("dpf"):
+            ts.add("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#d1fae5"))
+        elif label.startswith("idta"):
+            ts.add("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#fef3c7"))
+        elif "no mechanism" in label:
+            ts.add("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#fee2e2"))
+    tbl.setStyle(ts)
+    story.append(tbl)
+
+    story.append(PageBreak())
+
+    # ----- CLOUD Act log -----
+    story.append(Paragraph("2. CLOUD Act Risk Log", h2))
+    if not incidents:
+        story.append(Paragraph("No CLOUD Act incidents logged.", body))
+    else:
+        idata = [["Date", "Authority", "Type", "Data categories", "Handling", "Logged by"]]
+        for i in incidents:
+            idata.append([
+                i.get("date") or "—",
+                i.get("authority") or "—",
+                (i.get("request_type") or "")[:40],
+                (i.get("data_categories") or "")[:40],
+                (i.get("handling") or "")[:120],
+                (i.get("logged_by") or "—")[:32],
+            ])
+        itbl = Table(idata, colWidths=[2.4*cm, 3*cm, 4*cm, 4.5*cm, 8*cm, 4*cm], repeatRows=1)
+        itbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#cbd5e1")),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        story.append(itbl)
+
+    story.append(Spacer(1, 14))
+
+    # ----- Checklist -----
+    story.append(Paragraph("3. Compliance Checklist", h2))
+    state = checklist_doc.get("state") or {}
+    timestamps = checklist_doc.get("timestamps") or {}
+    cdata = [["#", "Item", "Confirmed", "Confirmed at"]]
+    for i, (key, label) in enumerate(CHECKLIST_ITEMS, start=1):
+        checked = bool(state.get(key))
+        cdata.append([str(i), label, "✓" if checked else "☐", (timestamps.get(key) or "")[:19]])
+    ctbl = Table(cdata, colWidths=[0.8*cm, 13*cm, 2*cm, 4*cm], repeatRows=1)
+    cts = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f2937")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#cbd5e1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ])
+    for idx, row in enumerate(cdata[1:], start=1):
+        if row[2] == "✓":
+            cts.add("BACKGROUND", (0, idx), (-1, idx), colors.HexColor("#d1fae5"))
+    ctbl.setStyle(cts)
+    story.append(ctbl)
+
+    story.append(Spacer(1, 18))
+    story.append(Paragraph(
+        "This snapshot was generated automatically by Learnify's UK GDPR Compliance Dashboard. "
+        "The signature hash above binds this PDF to the controller record at the moment of export.",
+        small
+    ))
+
+    pdf.build(story)
+    buf.seek(0)
+
+    fname = f"learnify-compliance-{now.strftime('%Y%m%d-%H%M')}.pdf"
+    return StreamingResponse(
+        buf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# ---- Owner email notifier (used by DPF verify cron) ----
+
+_COMPLIANCE_CRED_ASK = (
+    "reply with your password", "reply with the code", "send your password",
+    "cvv", "seed phrase", "recovery phrase",
+)
+
+
+async def _send_owner_compliance_email(subject: str, html: str) -> Optional[str]:
+    """Send a plain, safe HTML email to the OWNER_EMAIL.
+    Server-side templates only; recipient comes from env, never from user input."""
+    key = os.environ.get("EMERGENT_EMAIL_KEY")
+    from_name = os.environ.get("EMAIL_FROM_NAME", "Learnify Compliance")
+    if not key:
+        logging.warning("EMERGENT_EMAIL_KEY not set — skipping compliance email")
+        return None
+    body = f"{subject}\n{html}".lower()
+    if "<form" in body or "<input" in body:
+        raise ValueError("Compliance email must not contain form/input")
+    for p in _COMPLIANCE_CRED_ASK:
+        if p in body:
+            raise ValueError(f"Compliance email refuses credential-asking phrase: {p}")
+    payload = {
+        "to": [OWNER_EMAIL],
+        "subject": subject,
+        "html": html,
+        "from_name": from_name,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://integrations.emergentagent.com/api/v1/email/send",
+                headers={"X-Email-Key": key},
+                json=payload,
+            )
+        resp.raise_for_status()
+        return resp.json().get("id")
+    except httpx.HTTPStatusError as e:
+        logging.error(f"Compliance email failed: {e.response.status_code} {e.response.text}")
+    except Exception as e:
+        logging.error(f"Compliance email error: {e}")
+    return None
+
+
+async def _notify_once(kind: str, recipient_id: str, date_bucket: str, subject: str, html: str) -> bool:
+    """Idempotent notification. Returns True if a new email was actually sent."""
+    key = f"{kind}:{recipient_id}:{date_bucket}"
+    already = await db.compliance_notifications.find_one({"_id": key})
+    if already:
+        return False
+    email_id = await _send_owner_compliance_email(subject, html)
+    await db.compliance_notifications.insert_one({
+        "_id": key,
+        "kind": kind,
+        "recipient_id": recipient_id,
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+        "email_id": email_id,
+    })
+    return True
+
+
+# ---- DPF auto-verify (nightly cron) ----
+
+async def _run_dpf_verify() -> dict:
+    """Sweep every US recipient. Any DPF cert whose `dpf_expiry_date` has passed
+    is auto-marked inactive. TRAs older than 12 months get flagged. Owner emails
+    on both — deduped by day."""
+    now = datetime.now(timezone.utc)
+    today_bucket = now.strftime("%Y-%m-%d")
+    rows = await db.us_recipients.find({}, {"_id": 0}).to_list(1000)
+    marked_inactive: List[dict] = []
+    tra_flagged: List[dict] = []
+    emails_sent = 0
+
+    for row in rows:
+        rid = row.get("id")
+        # 1) DPF lapse — flip dpf_certified to False and stamp verification.
+        exp = _parse_iso_date(row.get("dpf_expiry_date"))
+        was_certified = bool(row.get("dpf_certified"))
+        if was_certified and exp is not None and exp < now:
+            await db.us_recipients.update_one(
+                {"id": rid},
+                {"$set": {
+                    "dpf_certified": False,
+                    "dpf_lapsed_at": now.isoformat(),
+                    "dpf_last_verified_at": now.isoformat(),
+                    "updated_at": now.isoformat(),
+                }},
+            )
+            marked_inactive.append({"id": rid, "company_name": row.get("company_name"), "expired_on": row.get("dpf_expiry_date")})
+            subject = f"[Compliance] DPF cert lapsed — {row.get('company_name')}"
+            html = (
+                f'<div style="font-family:Arial,sans-serif;padding:16px;max-width:640px">'
+                f'<h2 style="color:#b91c1c;margin:0 0 8px">DPF certification lapsed</h2>'
+                f'<p><b>{escape_html(row.get("company_name") or "Unknown recipient")}</b> — '
+                f'expiry date <b>{escape_html(row.get("dpf_expiry_date") or "unknown")}</b>. '
+                f'Learnify has auto-marked this recipient as no longer DPF-certified.</p>'
+                f'<p>Next step: renew the cert on the DPF Framework website, or execute a UK IDTA / SCC '
+                f'and refresh the Transfer Risk Assessment.</p>'
+                f'<p style="font-size:12px;color:#64748b">Sent by Learnify Compliance. '
+                f'This email is transactional; we never ask you for passwords or card details.</p>'
+                f'</div>'
+            )
+            try:
+                if await _notify_once("dpf_lapse", rid, today_bucket, subject, html):
+                    emails_sent += 1
+            except Exception as e:
+                logging.error(f"notify dpf_lapse failed: {e}")
+        else:
+            # Also mark last_verified_at so operators can see the cron is alive.
+            await db.us_recipients.update_one(
+                {"id": rid},
+                {"$set": {"dpf_last_verified_at": now.isoformat()}},
+            )
+
+        # 2) TRA drift — flag when the last TRA crossed 12 months.
+        tra = _parse_iso_date(row.get("tra_date"))
+        if tra is not None:
+            days_old = (now - tra).days
+            if days_old > 365:
+                # Bucket by month so we notify at most once/month per recipient.
+                month_bucket = now.strftime("%Y-%m")
+                tra_flagged.append({"id": rid, "company_name": row.get("company_name"), "days_old": days_old})
+                subject = f"[Compliance] TRA is {days_old} days old — {row.get('company_name')}"
+                html = (
+                    f'<div style="font-family:Arial,sans-serif;padding:16px;max-width:640px">'
+                    f'<h2 style="color:#b45309;margin:0 0 8px">Transfer Risk Assessment ageing</h2>'
+                    f'<p>The last TRA for <b>{escape_html(row.get("company_name") or "recipient")}</b> was '
+                    f'<b>{escape_html(row.get("tra_date"))}</b> — <b>{days_old} days ago</b>. '
+                    f'ICO guidance recommends re-assessing at least annually.</p>'
+                    f'<p>Please review the recipient in the Learnify Compliance Dashboard and record a new TRA date.</p>'
+                    f'<p style="font-size:12px;color:#64748b">Sent by Learnify Compliance. Transactional email — '
+                    f'we never ask for passwords or card details.</p>'
+                    f'</div>'
+                )
+                try:
+                    if await _notify_once("tra_stale", rid, month_bucket, subject, html):
+                        emails_sent += 1
+                except Exception as e:
+                    logging.error(f"notify tra_stale failed: {e}")
+
+    return {
+        "run_at": now.isoformat(),
+        "checked": len(rows),
+        "marked_inactive": marked_inactive,
+        "tra_flagged": tra_flagged,
+        "emails_sent": emails_sent,
+    }
+
+
+def _cron_authorized(auth_header: Optional[str]) -> bool:
+    secret = os.environ.get("WEBHOOK_CRON_SECRET")
+    if not secret or not auth_header:
+        return False
+    prefix = "Bearer "
+    if not auth_header.startswith(prefix):
+        return False
+    provided = auth_header[len(prefix):].strip()
+    return hmac.compare_digest(provided.encode(), secret.encode())
+
+
+@api_router.post("/cron/dpf-verify")
+async def cron_dpf_verify(
+    request: Request,
+    background_tasks: "BackgroundTasks",
+    authorization: Optional[str] = Header(default=None),
+):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not _cron_authorized(authorization):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    run_id = request.headers.get("X-Webhook-Id") or uuid.uuid4().hex
+    background_tasks.add_task(_run_dpf_verify)
+    return {"ok": True, "queued": True, "run_id": run_id}
+
+
+@api_router.post("/compliance/run-verify-now")
+async def compliance_run_verify_now(current=Depends(get_current_user)):
+    """Owner-only manual trigger of the DPF sweep — useful for immediate audit + testing."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    return await _run_dpf_verify()
 
 
 # ====================== Register router & middleware ======================

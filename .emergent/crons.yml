@@ -1,0 +1,8 @@
+crons:
+  - name: dpf-verify
+    description: "Nightly UK GDPR check: mark lapsed DPF certs inactive and email owner on TRA + DPF drift"
+    cron: "0 3 * * *"
+    endpoint: "{{BASE_URL}}/api/cron/dpf-verify"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true
