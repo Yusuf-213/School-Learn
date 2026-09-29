@@ -4,6 +4,40 @@ Learnify is a UK school management platform — preschool through university —
 covering AI tutoring, lesson planning, homework/assignment grading, parent portal,
 Stripe billing, safeguarding & UK GDPR compliance.
 
+## Iteration 27 (2026-03-XX) — UK GDPR Compliance Dashboard
+
+New owner-only page at **`/compliance`** (`nav-compliance` in the Owner nav).
+
+### Backend (`server.py`, ~200 new lines before router-mount)
+- Models: `USRecipientCreate/Update`, `CloudActIncidentCreate`, `ChecklistUpdate`.
+- Collections: `us_recipients`, `cloud_act_incidents`, `gdpr_checklist` (single doc, `_id="learnify"`).
+- Helper `_annotate_recipient` computes:
+  - `status` (green = active DPF cert, amber = IDTA/SCC only, red = neither),
+  - `dpf_expiring_soon` (< 60 days),
+  - `tra_stale` (> 12 months), `tra_missing`.
+- Endpoints (owner-only, `is_owner` guard):
+  - `GET/POST /api/compliance/recipients`, `PATCH/DELETE /api/compliance/recipients/{id}`
+  - `GET/POST /api/compliance/cloud-act`, `DELETE /api/compliance/cloud-act/{id}`
+  - `GET /api/compliance/checklist`, `PATCH /api/compliance/checklist`
+  - `GET /api/compliance/alerts` — aggregates the two alert lists plus a "no mechanism" list.
+- Fixed a naive-vs-aware datetime bug in `_parse_iso_date` (now always returns UTC-aware).
+
+### Frontend (`pages/Compliance.jsx`, ~500 lines, plain React + Tailwind + Phosphor icons)
+- Cohesive with existing brutal card aesthetic but adds a clean traffic-light palette (`emerald / amber / rose` Tailwind shades) that no other page uses — signals compliance-critical context at a glance.
+- Four sections in order: **Header + summary tiles**, **Alerts banner** (all-clear or attention-required), **Transfer Mechanism Tracker** (form + colour-coded table with per-row pills), **CLOUD Act Risk Log** (form + list), **Compliance Checklist** (6 items with progress bar).
+- Every input/button/row has a stable `data-testid`.
+- Loads all four endpoints in parallel on mount; refreshes after every mutation.
+- 403 from backend → friendly "access restricted" panel.
+
+### Routing / nav
+- Added `<Route path="/compliance" element={<Compliance/>}/>` in `App.js`.
+- Added `Compliance` link (with `ShieldCheck` icon) to Owner nav in `GlobalNav.jsx`.
+
+### Stack notes
+- Kept the codebase in **JavaScript** (existing convention) rather than migrating to TypeScript.
+- Kept **MongoDB** rather than moving to a relational DB — the collections have flat, document-friendly shapes so this is a good fit and consistent with the rest of the app.
+
+
 ## Iteration 26 (2026-03-XX) — Removed `emergentintegrations` entirely for public-repo deploy
 
 - Deleted `backend/emergentintegrations/` folder.

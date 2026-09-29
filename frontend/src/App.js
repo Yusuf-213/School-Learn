@@ -39,6 +39,7 @@ import VerifyDomain from "@/pages/VerifyDomain";
 import Legal from "@/pages/Legal";
 import Parent from "@/pages/Parent";
 import ParentRequests from "@/pages/ParentRequests";
+import Compliance from "@/pages/Compliance";
 
 function AppRouter() {
   const location = useLocation();
@@ -80,6 +81,7 @@ function AppRouter() {
       <Route path="/legal" element={<Legal />} />
       <Route path="/parent" element={<ProtectedRoute><Parent /></ProtectedRoute>} />
       <Route path="/parent-requests" element={<ProtectedRoute><ParentRequests /></ProtectedRoute>} />
+      <Route path="/compliance" element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
       <Route path="*" element={<Landing />} />
     </Routes>
   );

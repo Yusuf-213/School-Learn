@@ -26,6 +26,7 @@ function navForUser(user) {
     return [
       { to: "/owner", label: "Owner HQ", icon: Crown, testid: "nav-owner" },
       { to: "/owner/payouts", label: "Payouts", icon: Bank, testid: "nav-payouts" },
+      { to: "/compliance", label: "Compliance", icon: ShieldCheck, testid: "nav-compliance" },
       ...base,
       { to: "/suggestions", label: "Suggestions", icon: Chat, testid: "nav-suggestions" },
       { to: "/pricing", label: "Plans", icon: CreditCard, testid: "nav-plans" },

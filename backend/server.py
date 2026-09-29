@@ -5463,6 +5463,255 @@ async def login_username(payload: dict):
         },
     }
 
+# ====================== UK GDPR Compliance Dashboard ======================
+# Owner-only. Tracks US data recipients (transfer mechanisms), CLOUD Act incidents,
+# and a persistent 6-item compliance checklist. Alerts surface DPF certs expiring
+# within 60 days and TRAs older than 12 months.
+
+CHECKLIST_ITEMS = [
+    ("dpf_verified",       "DPF certification verified for all US recipients"),
+    ("idta_executed",      "IDTA / UK SCCs executed where needed"),
+    ("tra_documented",     "Transfer Risk Assessment completed and documented"),
+    ("cloud_act_logged",   "CLOUD Act exposure documented"),
+    ("dsar_cross_border",  "Data subject rights process updated for cross-border access"),
+    ("ropa_updated",       "Records of Processing updated to reflect US hosting"),
+]
+CHECKLIST_KEYS = {k for k, _ in CHECKLIST_ITEMS}
+
+
+class USRecipientCreate(BaseModel):
+    company_name: str = Field(..., min_length=1, max_length=200)
+    dpf_certified: bool = False
+    dpf_expiry_date: Optional[str] = None      # ISO date "YYYY-MM-DD"
+    idta_in_place: bool = False
+    tra_date: Optional[str] = None             # ISO date "YYYY-MM-DD"
+    notes: Optional[str] = None
+
+
+class USRecipientUpdate(BaseModel):
+    company_name: Optional[str] = None
+    dpf_certified: Optional[bool] = None
+    dpf_expiry_date: Optional[str] = None
+    idta_in_place: Optional[bool] = None
+    tra_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class CloudActIncidentCreate(BaseModel):
+    date: str                                  # ISO date
+    authority: Optional[str] = None
+    request_type: str = Field(..., min_length=1, max_length=200)
+    data_categories: Optional[str] = None
+    handling: str = Field(..., min_length=1)
+
+
+class ChecklistUpdate(BaseModel):
+    key: str
+    checked: bool
+
+
+def _parse_iso_date(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        try:
+            dt = datetime.strptime(s, "%Y-%m-%d")
+        except Exception:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _annotate_recipient(row: dict) -> dict:
+    """Attach computed `status` ('green'|'amber'|'red') and per-row flags."""
+    now = datetime.now(timezone.utc)
+    dpf_exp = _parse_iso_date(row.get("dpf_expiry_date"))
+    tra = _parse_iso_date(row.get("tra_date"))
+
+    dpf_active = bool(row.get("dpf_certified")) and (dpf_exp is None or dpf_exp >= now)
+    dpf_expiring_soon = dpf_active and dpf_exp is not None and (dpf_exp - now).days <= 60
+    tra_stale = tra is not None and (now - tra).days > 365
+    tra_missing = tra is None
+
+    if dpf_active:
+        status = "green"
+        status_label = "DPF certified"
+    elif row.get("idta_in_place"):
+        status = "amber"
+        status_label = "IDTA in place"
+    else:
+        status = "red"
+        status_label = "No mechanism"
+
+    return {
+        **{k: v for k, v in row.items() if k != "_id"},
+        "status": status,
+        "status_label": status_label,
+        "dpf_expiring_soon": dpf_expiring_soon,
+        "dpf_days_to_expiry": (dpf_exp - now).days if dpf_exp else None,
+        "tra_stale": tra_stale,
+        "tra_missing": tra_missing,
+        "tra_days_old": (now - tra).days if tra else None,
+    }
+
+
+@api_router.get("/compliance/recipients")
+async def compliance_list_recipients(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    rows = await db.us_recipients.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"recipients": [_annotate_recipient(r) for r in rows]}
+
+
+@api_router.post("/compliance/recipients")
+async def compliance_add_recipient(payload: USRecipientCreate, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    doc = payload.model_dump()
+    doc["id"] = uuid.uuid4().hex[:12]
+    doc["created_at"] = datetime.now(timezone.utc).isoformat()
+    doc["updated_at"] = doc["created_at"]
+    await db.us_recipients.insert_one(doc)
+    doc.pop("_id", None)
+    return _annotate_recipient(doc)
+
+
+@api_router.patch("/compliance/recipients/{rid}")
+async def compliance_update_recipient(rid: str, payload: USRecipientUpdate, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    patch = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not patch:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+    res = await db.us_recipients.update_one({"id": rid}, {"$set": patch})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Recipient not found")
+    row = await db.us_recipients.find_one({"id": rid}, {"_id": 0})
+    return _annotate_recipient(row)
+
+
+@api_router.delete("/compliance/recipients/{rid}")
+async def compliance_delete_recipient(rid: str, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    res = await db.us_recipients.delete_one({"id": rid})
+    if not res.deleted_count:
+        raise HTTPException(status_code=404, detail="Recipient not found")
+    return {"ok": True}
+
+
+@api_router.get("/compliance/cloud-act")
+async def compliance_list_incidents(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    rows = await db.cloud_act_incidents.find({}, {"_id": 0}).sort("date", -1).to_list(500)
+    return {"incidents": rows}
+
+
+@api_router.post("/compliance/cloud-act")
+async def compliance_add_incident(payload: CloudActIncidentCreate, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    doc = payload.model_dump()
+    doc["id"] = uuid.uuid4().hex[:12]
+    doc["logged_by"] = current.get("email")
+    doc["logged_at"] = datetime.now(timezone.utc).isoformat()
+    await db.cloud_act_incidents.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.delete("/compliance/cloud-act/{iid}")
+async def compliance_delete_incident(iid: str, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    res = await db.cloud_act_incidents.delete_one({"id": iid})
+    if not res.deleted_count:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return {"ok": True}
+
+
+@api_router.get("/compliance/checklist")
+async def compliance_get_checklist(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    doc = await db.gdpr_checklist.find_one({"_id": "learnify"}) or {}
+    state = doc.get("state") or {}
+    timestamps = doc.get("timestamps") or {}
+    return {
+        "items": [
+            {
+                "key": k,
+                "label": lbl,
+                "checked": bool(state.get(k, False)),
+                "checked_at": timestamps.get(k),
+            }
+            for k, lbl in CHECKLIST_ITEMS
+        ]
+    }
+
+
+@api_router.patch("/compliance/checklist")
+async def compliance_toggle_checklist(payload: ChecklistUpdate, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    if payload.key not in CHECKLIST_KEYS:
+        raise HTTPException(status_code=400, detail="Unknown checklist key")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.gdpr_checklist.update_one(
+        {"_id": "learnify"},
+        {
+            "$set": {
+                f"state.{payload.key}": bool(payload.checked),
+                f"timestamps.{payload.key}": now if payload.checked else None,
+                "updated_at": now,
+                "updated_by": current.get("email"),
+            }
+        },
+        upsert=True,
+    )
+    return {"ok": True, "key": payload.key, "checked": bool(payload.checked), "checked_at": now if payload.checked else None}
+
+
+@api_router.get("/compliance/alerts")
+async def compliance_alerts(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    rows = await db.us_recipients.find({}, {"_id": 0}).to_list(500)
+    dpf_expiring = []
+    tra_stale = []
+    no_mechanism = []
+    for row in rows:
+        annotated = _annotate_recipient(row)
+        if annotated["dpf_expiring_soon"]:
+            dpf_expiring.append({
+                "id": annotated["id"],
+                "company_name": annotated["company_name"],
+                "dpf_expiry_date": annotated.get("dpf_expiry_date"),
+                "days_to_expiry": annotated["dpf_days_to_expiry"],
+            })
+        if annotated["tra_stale"] or annotated["tra_missing"]:
+            tra_stale.append({
+                "id": annotated["id"],
+                "company_name": annotated["company_name"],
+                "tra_date": annotated.get("tra_date"),
+                "days_old": annotated["tra_days_old"],
+                "missing": annotated["tra_missing"],
+            })
+        if annotated["status"] == "red":
+            no_mechanism.append({"id": annotated["id"], "company_name": annotated["company_name"]})
+    return {
+        "dpf_expiring_within_60_days": dpf_expiring,
+        "tra_stale_or_missing": tra_stale,
+        "no_transfer_mechanism": no_mechanism,
+        "total_recipients": len(rows),
+    }
+
+
 # ====================== Register router & middleware ======================
 
 app.include_router(api_router)
