@@ -25,7 +25,10 @@ Stripe billing, safeguarding & UK GDPR compliance.
 - `Pricing.jsx` redesigned into Student + Family grids; School/MAT shown as a Contact Us card (no price). Checkout still uses the existing hosted Stripe Checkout.
 
 ### Bug fixes (done)
-- DPA gate "I Accept": frontend `DpaGate.jsx` no longer stays open when a prior status fetch errored — acceptance always unlocks and clears `statusError`. (Backend accept verified working via curl.)
+- Instant promo: `/billing/redeem` now grants the plan the user CLICKS (fixed bug where it always granted "standard"/promo's default school tier). Public individual/family plans are self-selectable; school/MAT grants only via a tier-locked promo. Pricing page: type a code then click any plan to unlock it instantly.
+- Family at checkout: `/billing/checkout` accepts `child_emails` (stored on the tx); on activation (webhook + status-check) `_apply_family_children` links existing child accounts instantly and stores `family_invites` for not-yet-registered emails. `_consume_family_invites` runs on child login/register to auto-link them. Children inherit the parent's family tier live via `get_user_plan` → `_inherited_family_tier` (family→student_standard, family_premium/ultra→student_premium). Pricing shows "Via family plan" and hides the manage panel for inherited plans.
+- Password reset: `POST /auth/forgot-password` + `/auth/reset-password` (sha256-hashed single-use 60-min tokens in `password_reset_tokens`, generic `_send_user_email` via Emergent email proxy, link also logged). Frontend `/forgot-password`, `/reset-password`, + login link.
+- DPA gate "I Accept": frontend `DpaGate.jsx` no longer stays open when a prior status fetch errored.
 - Removed 16 automated-test schools + 16 orphan users + 26 classes from the DB; kept `school_tester_demo`.
 
 ### KNOWN CONSTRAINT — embedded Stripe not possible with current keys

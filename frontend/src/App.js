@@ -44,6 +44,8 @@ import ParentRequests from "@/pages/ParentRequests";
 import Compliance from "@/pages/Compliance";
 import Privacy from "@/pages/Privacy";
 import Settings from "@/pages/Settings";
+import ForgotPassword from "@/pages/ForgotPassword";
+import ResetPassword from "@/pages/ResetPassword";
 
 function AppRouter() {
   const location = useLocation();
@@ -73,6 +75,8 @@ function AppRouter() {
       <Route path="/contact" element={<Contact />} />
       <Route path="/dpa" element={<DPA />} />
       <Route path="/privacy" element={<Privacy />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/owner/payouts" element={<RoleRoute allow={OWNER_ONLY}><Payouts /></RoleRoute>} />
       <Route path="/timetable" element={<ProtectedRoute><Timetable /></ProtectedRoute>} />

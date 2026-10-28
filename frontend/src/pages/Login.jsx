@@ -84,6 +84,11 @@ export default function Login() {
                 className="brutal-btn bg-ink text-white w-full hover:bg-[#2A2A2A] disabled:opacity-60">
                 {loading ? "Signing in…" : "Sign in"}
               </button>
+              <div className="text-right">
+                <Link to="/forgot-password" className="text-xs font-bold underline underline-offset-4 text-[#4A4A4A]" data-testid="forgot-password-link">
+                  Forgot your password?
+                </Link>
+              </div>
             </form>
 
             <div className="flex items-center gap-3 my-6">

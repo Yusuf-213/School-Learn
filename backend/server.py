@@ -163,8 +163,9 @@ class AIGenerateRequest(BaseModel):
     tutor_locked_until: Optional[str] = None  # ISO datetime — when set with allow_tutor=false, tutor auto-unlocks after this time
 
 class CheckoutCreateRequest(BaseModel):
-    plan_id: Literal["basic", "standard", "pro", "school_small", "school_medium", "school_large", "mat_1_5", "mat_5_10", "mat_10_30", "mat_30_50", "mat_50_80", "mat_80_100"]
+    plan_id: str
     origin_url: str
+    child_emails: Optional[List[str]] = None
 
 class AIChatRequest(BaseModel):
     subject: str
@@ -413,6 +414,7 @@ async def register(req: RegisterRequest):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
+    await _consume_family_invites(doc)
     token = make_jwt(user_id)
     return {
         "token": token,
@@ -435,6 +437,7 @@ async def login(req: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not verify_password(req.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    await _consume_family_invites(user)
     token = make_jwt(user["user_id"])
     return {
         "token": token,
@@ -449,6 +452,101 @@ async def login(req: LoginRequest):
             "school_id": user.get("school_id"),
         },
     }
+
+# ====================== Password reset ======================
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+    origin_url: Optional[str] = None
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+async def _send_user_email(to: str, subject: str, html: str) -> Optional[str]:
+    """Generic transactional email to a specific user via the Emergent email proxy."""
+    key = os.environ.get("EMERGENT_EMAIL_KEY")
+    from_name = os.environ.get("EMAIL_FROM_NAME", "Learnify")
+    if not key:
+        logging.warning("EMERGENT_EMAIL_KEY not set — cannot send user email")
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://integrations.emergentagent.com/api/v1/email/send",
+                headers={"X-Email-Key": key},
+                json={"to": [to], "subject": subject, "html": html, "from_name": from_name},
+            )
+        resp.raise_for_status()
+        return resp.json().get("id")
+    except Exception as e:
+        logging.error(f"User email send failed: {e}")
+        return None
+
+
+@api_router.post("/auth/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest):
+    """Always returns ok (never reveals whether an account exists)."""
+    import hashlib
+    email = req.email.lower().strip()
+    user = await db.users.find_one({"email": email})
+    if user and user.get("provider", "email") == "email":
+        raw = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw.encode()).hexdigest()
+        now = datetime.now(timezone.utc)
+        # Invalidate any outstanding tokens for this user, then store the new one.
+        await db.password_reset_tokens.update_many(
+            {"user_id": user["user_id"], "used": False}, {"$set": {"used": True}}
+        )
+        await db.password_reset_tokens.insert_one({
+            "user_id": user["user_id"],
+            "email": email,
+            "token_hash": token_hash,
+            "expires_at": (now + timedelta(minutes=60)).isoformat(),
+            "used": False,
+            "created_at": now.isoformat(),
+        })
+        origin = (req.origin_url or os.environ.get("APP_BASE_URL") or "").rstrip("/")
+        link = f"{origin}/reset-password?token={raw}" if origin else f"/reset-password?token={raw}"
+        logging.info(f"[password-reset] link for {email}: {link}")
+        html = (
+            f"<p>Hello,</p><p>We received a request to reset your Learnify password. "
+            f"Click the link below to choose a new password. This link expires in 60 minutes.</p>"
+            f"<p><a href=\"{link}\">Reset my password</a></p>"
+            f"<p>If you didn't request this, you can safely ignore this email.</p>"
+        )
+        await _send_user_email(email, "Reset your Learnify password", html)
+    return {"ok": True, "message": "If an account exists for that email, a reset link has been sent."}
+
+
+@api_router.post("/auth/reset-password")
+async def reset_password(req: ResetPasswordRequest):
+    import hashlib
+    token_hash = hashlib.sha256(req.token.strip().encode()).hexdigest()
+    rec = await db.password_reset_tokens.find_one({"token_hash": token_hash})
+    if not rec or rec.get("used"):
+        raise HTTPException(status_code=400, detail="This reset link is invalid or has already been used.")
+    try:
+        exp = datetime.fromisoformat(rec["expires_at"])
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+    except Exception:
+        exp = datetime.now(timezone.utc) - timedelta(seconds=1)
+    if exp < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="This reset link has expired. Please request a new one.")
+    pw_err = validate_password_policy(req.new_password)
+    if pw_err:
+        raise HTTPException(status_code=400, detail=pw_err)
+    await db.users.update_one(
+        {"user_id": rec["user_id"]}, {"$set": {"password_hash": hash_password(req.new_password)}}
+    )
+    await db.password_reset_tokens.update_many(
+        {"user_id": rec["user_id"], "used": False}, {"$set": {"used": True}}
+    )
+    return {"ok": True, "message": "Your password has been reset. You can now sign in."}
+
 
 # ====================== Auth: Emergent Google ======================
 
@@ -730,7 +828,11 @@ def extract_json(text: str) -> dict:
         raise ValueError("No JSON object found")
     return json.loads(text[start:end + 1])
 
-async def get_user_plan(user: dict) -> dict:
+FAMILY_CHILD_PLAN = {"family": "student_standard", "family_premium": "student_premium", "ultra_premium": "student_premium"}
+
+
+def _active_tier_for(user: dict) -> str:
+    """Resolve a user's own current tier, downgrading to free if expired."""
     tier = user.get("subscription_tier", "free")
     expires = user.get("subscription_expires_at")
     lifetime = user.get("subscription_lifetime", False)
@@ -743,7 +845,103 @@ async def get_user_plan(user: dict) -> dict:
                 tier = "free"
         except Exception:
             tier = "free"
+    return tier
+
+
+async def _inherited_family_tier(user_id: str) -> Optional[str]:
+    """If this user is an approved child of a parent on an active family plan,
+    return the per-child tier they inherit (best of all parents)."""
+    rank = {"student_standard": 1, "student_premium": 2}
+    best, best_rank = None, 0
+    links = await db.parent_links.find({"child_user_id": user_id, "status": "approved"}).to_list(20)
+    for link in links:
+        parent = await db.users.find_one({"user_id": link["parent_user_id"]})
+        if not parent:
+            continue
+        child_tier = FAMILY_CHILD_PLAN.get(_active_tier_for(parent))
+        if child_tier and rank.get(child_tier, 0) > best_rank:
+            best, best_rank = child_tier, rank[child_tier]
+    return best
+
+
+async def get_user_plan(user: dict) -> dict:
+    tier = _active_tier_for(user)
+    # Children on a free plan inherit their guardian's family plan benefits.
+    if tier == "free" and user.get("role") in (ROLE_STUDENT, ROLE_INDIVIDUAL):
+        inherited = await _inherited_family_tier(user["user_id"])
+        if inherited:
+            return {"tier": inherited, "inherited_from_family": True, **PLANS.get(inherited, PLANS["free"])}
     return {"tier": tier, **PLANS.get(tier, PLANS["free"])}
+
+
+async def _apply_family_children(parent: dict, emails, max_children: int):
+    """For a parent who just got a family plan: link existing child accounts instantly
+    and store invites for emails that haven't registered yet (linked on their first login)."""
+    if not emails:
+        return
+    seen = set()
+    linked = await db.parent_links.count_documents({"parent_user_id": parent["user_id"], "status": "approved"})
+    for raw in emails:
+        email = (raw or "").strip().lower()
+        if not email or email in seen or email == parent["email"].lower():
+            continue
+        seen.add(email)
+        if linked >= max_children:
+            break
+        child = await db.users.find_one({"email": email})
+        now = datetime.now(timezone.utc).isoformat()
+        if child and child.get("role") in {ROLE_STUDENT, ROLE_INDIVIDUAL}:
+            existing = await db.parent_links.find_one({"parent_user_id": parent["user_id"], "child_user_id": child["user_id"]})
+            if existing and existing.get("status") == "approved":
+                continue
+            await db.parent_links.update_one(
+                {"parent_user_id": parent["user_id"], "child_user_id": child["user_id"]},
+                {"$set": {
+                    "link_id": (existing or {}).get("link_id") or f"pl_{uuid.uuid4().hex[:10]}",
+                    "parent_user_id": parent["user_id"], "parent_email": parent["email"], "parent_name": parent.get("name"),
+                    "child_user_id": child["user_id"], "child_email": email, "child_name": child.get("name"),
+                    "child_school_id": child.get("school_id"), "status": "approved",
+                    "requested_at": now, "updated_at": now, "decided_at": now,
+                    "decided_by": parent["user_id"], "decided_by_role": "family_plan",
+                }},
+                upsert=True,
+            )
+            linked += 1
+        else:
+            await db.family_invites.update_one(
+                {"parent_user_id": parent["user_id"], "child_email": email},
+                {"$set": {"parent_user_id": parent["user_id"], "parent_email": parent["email"],
+                          "child_email": email, "consumed": False, "created_at": now}},
+                upsert=True,
+            )
+
+
+async def _consume_family_invites(user: dict):
+    """When a child logs in/registers, link them to any guardian who pre-added their email."""
+    if user.get("role") not in {ROLE_STUDENT, ROLE_INDIVIDUAL}:
+        return
+    invites = await db.family_invites.find({"child_email": user["email"].lower(), "consumed": False}).to_list(20)
+    for inv in invites:
+        parent = await db.users.find_one({"user_id": inv["parent_user_id"]})
+        if not parent:
+            await db.family_invites.update_one({"_id": inv["_id"]}, {"$set": {"consumed": True}})
+            continue
+        now = datetime.now(timezone.utc).isoformat()
+        existing = await db.parent_links.find_one({"parent_user_id": parent["user_id"], "child_user_id": user["user_id"]})
+        if not (existing and existing.get("status") == "approved"):
+            await db.parent_links.update_one(
+                {"parent_user_id": parent["user_id"], "child_user_id": user["user_id"]},
+                {"$set": {
+                    "link_id": (existing or {}).get("link_id") or f"pl_{uuid.uuid4().hex[:10]}",
+                    "parent_user_id": parent["user_id"], "parent_email": parent["email"], "parent_name": parent.get("name"),
+                    "child_user_id": user["user_id"], "child_email": user["email"].lower(), "child_name": user.get("name"),
+                    "child_school_id": user.get("school_id"), "status": "approved",
+                    "requested_at": now, "updated_at": now, "decided_at": now,
+                    "decided_by": parent["user_id"], "decided_by_role": "family_plan",
+                }},
+                upsert=True,
+            )
+        await db.family_invites.update_one({"_id": inv["_id"]}, {"$set": {"consumed": True, "consumed_at": now}})
 
 @api_router.get("/plans")
 async def list_plans():
@@ -760,8 +958,9 @@ async def billing_me(current=Depends(get_current_user)):
     return {
         "tier": plan["tier"],
         "plan": {k: plan.get(k) for k in ("name", "amount", "currency", "period", "daily_ai_limit", "papers", "exam_boards", "dreams", "socratic_tutor", "priority_ai", "early_access", "family", "max_children", "parent_dashboard", "audience", "tagline")},
+        "inherited_from_family": bool(plan.get("inherited_from_family")),
         "used_today": used_today,
-        "expires_at": current.get("subscription_expires_at"),
+        "expires_at": None if plan.get("inherited_from_family") else current.get("subscription_expires_at"),
         "cancel_at_period_end": bool(current.get("cancel_at_period_end")),
         "canceled_at": current.get("canceled_at"),
         "lifetime": bool(current.get("subscription_lifetime")),
@@ -1300,8 +1499,13 @@ async def billing_checkout(
     payload: CheckoutCreateRequest, http_request: Request, current=Depends(get_current_user)
 ):
     plan = PLANS.get(payload.plan_id)
-    if not plan or plan["amount"] <= 0:
+    if not plan or plan["amount"] <= 0 or plan.get("hidden"):
         raise HTTPException(status_code=400, detail="Invalid plan")
+
+    # Family plans: capture the children's emails to pre-link after payment.
+    child_emails = []
+    if plan.get("family") and payload.child_emails:
+        child_emails = [e.strip().lower() for e in payload.child_emails if e and e.strip()][: int(plan.get("max_children", 4))]
 
     origin = payload.origin_url.rstrip("/")
     success_url = f"{origin}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
@@ -1332,6 +1536,7 @@ async def billing_checkout(
         "period": plan["period"],
         "payment_status": "initiated",
         "status": "open",
+        "child_emails": child_emails,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -1377,6 +1582,8 @@ async def billing_status(session_id: str, http_request: Request, current=Depends
                 "cancel_at_period_end": False,
             }, "$unset": {"canceled_at": ""}},
         )
+        if plan.get("family") and tx.get("child_emails"):
+            await _apply_family_children(current, tx["child_emails"], int(plan.get("max_children", 4)))
 
     tx = await db.payment_transactions.find_one({"session_id": session_id, "user_id": current["user_id"]}, {"_id": 0})
     return tx
@@ -1417,6 +1624,10 @@ async def stripe_webhook(request: Request):
                         "cancel_at_period_end": False,
                     }, "$unset": {"canceled_at": ""}},
                 )
+                if plan.get("family") and tx.get("child_emails"):
+                    parent = await db.users.find_one({"user_id": tx["user_id"]})
+                    if parent:
+                        await _apply_family_children(parent, tx["child_emails"], int(plan.get("max_children", 4)))
     return {"ok": True}
 
 # ====================== Microsoft Auth config ======================
@@ -3036,11 +3247,20 @@ async def billing_redeem_promo(body: dict, current=Depends(get_current_user)):
     promo = await resolve_promo_code(code)
     if not promo:
         raise HTTPException(status_code=400, detail="Invalid or expired promo code")
-    plan_id = (promo.get("plan_id") or "standard").lower()
-    if plan_id not in PLANS:
-        plan_id = "standard"
+    # Plan resolution: the plan the user CLICKED wins (that's the whole point — click a plan,
+    # enter a promo, get it). We only allow public individual/family plans to be self-selected;
+    # school/MAT grants must come from the promo's own locked tier.
+    PUBLIC_SELECTABLE = {"student_basic", "student_standard", "student_premium", "family", "family_premium", "ultra_premium"}
+    chosen = (body.get("plan_id") or "").lower()
+    restricted = (promo.get("plan_id") or promo.get("tier") or "").lower()
+    if chosen in PUBLIC_SELECTABLE:
+        plan_id = chosen
+    elif restricted in PLANS and not PLANS[restricted].get("hidden"):
+        plan_id = restricted
+    else:
+        plan_id = "student_standard"
     plan = PLANS[plan_id]
-    period = plan.get("period", "year")
+    period = plan.get("period", "month")
     # Lifetime codes (like HWA26) never expire.
     is_lifetime = bool(promo.get("lifetime")) or code == "HWA26"
     if is_lifetime:
@@ -3058,6 +3278,9 @@ async def billing_redeem_promo(body: dict, current=Depends(get_current_user)):
         "subscription_lifetime": is_lifetime,
     }
     await db.users.update_one({"user_id": current["user_id"]}, {"$set": updates, "$unset": {"canceled_at": "", "next_tier": ""}})
+    # Family promo: pre-link the children's emails too.
+    if plan.get("family") and body.get("child_emails"):
+        await _apply_family_children({**current, **updates}, body.get("child_emails"), int(plan.get("max_children", 4)))
     await increment_promo_usage(code)
     await db.promo_redemptions.insert_one({
         "redemption_id": f"red_{uuid.uuid4().hex[:10]}",

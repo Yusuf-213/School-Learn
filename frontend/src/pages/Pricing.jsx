@@ -36,6 +36,8 @@ export default function Pricing() {
   const [downgradeBusy, setDowngradeBusy] = useState(null);
   const [promoCode, setPromoCode] = useState("");
   const [redeeming, setRedeeming] = useState(false);
+  const [familyModal, setFamilyModal] = useState(null); // {plan_id, name, max}
+  const [childEmails, setChildEmails] = useState(["", "", "", ""]);
 
   const redeemPromo = async (e) => {
     e.preventDefault();
@@ -74,15 +76,50 @@ export default function Pricing() {
 
   const subscribe = async (plan_id) => {
     if (!user) { navigate("/login"); return; }
+    // Promo path: a code in the box + clicking a plan = instant activation of THAT plan, no card.
+    if (promoCode.trim()) {
+      setLoading(plan_id);
+      try {
+        const { data } = await api.post("/billing/redeem", { code: promoCode.trim(), plan_id });
+        toast.success(`${data.plan_name} unlocked — no card needed.${data.lifetime ? " Lifetime access." : ""}`);
+        setPromoCode("");
+        await refreshBilling();
+      } catch (e) {
+        toast.error(e.response?.data?.detail || "Promo code could not be applied");
+      } finally {
+        setLoading(null);
+      }
+      return;
+    }
+    // Family plans: collect children's emails first so they're auto-linked after payment.
+    const plan = plans.find((p) => p.id === plan_id);
+    if (plan?.family) {
+      setChildEmails(["", "", "", ""]);
+      setFamilyModal({ plan_id, name: plan.name, max: plan.max_children || 4 });
+      return;
+    }
+    await startCheckout(plan_id, []);
+  };
+
+  const startCheckout = async (plan_id, child_emails) => {
     setLoading(plan_id);
     try {
-      const { data } = await api.post("/billing/checkout", { plan_id, origin_url: window.location.origin });
+      const { data } = await api.post("/billing/checkout", {
+        plan_id, origin_url: window.location.origin, child_emails,
+      });
       window.location.href = data.url;
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed to start checkout");
     } finally {
       setLoading(null);
     }
+  };
+
+  const confirmFamilyCheckout = async () => {
+    const emails = childEmails.map((x) => x.trim()).filter(Boolean);
+    const pid = familyModal.plan_id;
+    setFamilyModal(null);
+    await startCheckout(pid, emails);
   };
 
   const cancelSubscription = async () => {
@@ -190,8 +227,8 @@ export default function Pricing() {
         ) : (
           <button onClick={() => subscribe(p.id)} disabled={loading === p.id}
             data-testid={`plan-cta-${p.id}`}
-            className="brutal-btn bg-ink text-white hover:bg-[#2A2A2A] disabled:opacity-60">
-            {loading === p.id ? "Opening checkout…" : "Subscribe"}
+            className={`brutal-btn text-white hover:bg-[#2A2A2A] disabled:opacity-60 ${promoCode.trim() ? "bg-emerald-700" : "bg-ink"}`}>
+            {loading === p.id ? (promoCode.trim() ? "Activating…" : "Opening…") : (promoCode.trim() ? "Get with promo code" : (p.audience === "family" ? "Choose plan" : "Subscribe"))}
           </button>
         )}
       </div>
@@ -214,11 +251,12 @@ export default function Pricing() {
               </span>
             )}
             {billing.lifetime && <span className="ml-2 font-bold uppercase text-[10px] bg-mint border-2 border-ink rounded px-1.5 py-0.5">Lifetime</span>}
+            {billing.inherited_from_family && <span className="ml-2 font-bold uppercase text-[10px] bg-lavender border-2 border-ink rounded px-1.5 py-0.5">Via family plan</span>}
           </div>
         )}
       </div>
 
-      {user && billing && billing.tier !== "free" && !billing.lifetime && (
+      {user && billing && billing.tier !== "free" && !billing.lifetime && !billing.inherited_from_family && (
         <div className="brutal-card p-5 bg-white flex flex-wrap items-center justify-between gap-4" data-testid="manage-subscription">
           <div>
             <div className="text-xs uppercase tracking-[0.2em] font-bold mb-1 text-[#4A4A4A]">Manage subscription</div>
@@ -294,7 +332,7 @@ export default function Pricing() {
           <Ticket size={22} weight="fill" />
           <div className="flex-1 min-w-[220px]">
             <div className="font-display font-bold text-lg">Have a promo code?</div>
-            <div className="text-xs text-[#4A4A4A]">Instant activation — no card needed. Valid codes unlock the plan on the spot.</div>
+            <div className="text-xs text-[#4A4A4A]">Type your code, then click <strong>any plan below</strong> to unlock it instantly — no card needed. Or hit Redeem to apply the code's default plan.</div>
           </div>
           <input value={promoCode} onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
             placeholder="ENTER CODE" data-testid="promo-input"
@@ -366,6 +404,33 @@ export default function Pricing() {
           Tell us who you are, why you want a custom plan, and roughly how many pupils or schools — we'll come back within one working day.
         </p>
       </div>
+
+      {familyModal && (
+        <div className="fixed inset-0 z-50 bg-ink/50 flex items-center justify-center p-4" data-testid="family-emails-modal">
+          <div className="brutal-card bg-white p-6 w-full max-w-md space-y-4">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">{familyModal.name}</div>
+              <h3 className="font-display font-black text-2xl">Add your children</h3>
+              <p className="text-sm text-[#4A4A4A] mt-1">Enter up to {familyModal.max} children's email addresses. After payment, when each child logs in they're automatically put on your family plan. You can add or change these later.</p>
+            </div>
+            <div className="space-y-2">
+              {Array.from({ length: familyModal.max }).map((_, i) => (
+                <input key={i} type="email" placeholder={`Child ${i + 1} email (optional)`}
+                  data-testid={`family-child-email-${i}`}
+                  className="brutal-input w-full"
+                  value={childEmails[i] || ""}
+                  onChange={(e) => { const n = [...childEmails]; n[i] = e.target.value; setChildEmails(n); }} />
+              ))}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setFamilyModal(null)} data-testid="family-modal-cancel"
+                className="brutal-btn bg-white hover:bg-peach">Cancel</button>
+              <button onClick={confirmFamilyCheckout} data-testid="family-modal-continue"
+                className="brutal-btn bg-ink text-white">Continue to payment</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 
