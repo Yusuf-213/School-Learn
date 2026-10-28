@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Eye, TextAa, ArrowsClockwise, Gear, X } from "@phosphor-icons/react";
+import { Link } from "react-router-dom";
+import { Eye, TextAa, ArrowsClockwise, Gear, X, SlidersHorizontal } from "@phosphor-icons/react";
 
 const KEY = "learnify_a11y";
 
@@ -52,6 +53,10 @@ export default function AccessibilityMenu() {
               className="brutal-btn bg-white inline-flex items-center gap-2 mt-2 text-sm">
               <ArrowsClockwise size={14} weight="bold" /> Reset to defaults
             </button>
+            <Link to="/settings" onClick={() => setOpen(false)} data-testid="a11y-settings-link"
+              className="brutal-btn bg-mint inline-flex items-center gap-2 mt-2 ml-2 text-sm">
+              <SlidersHorizontal size={14} weight="bold" /> Navigation settings
+            </Link>
             <p className="text-xs text-[#4A4A4A] mt-4">Settings are saved on this device. WCAG 2.2 AA features.</p>
           </div>
         </div>

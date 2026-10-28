@@ -19,7 +19,7 @@ from fastapi import BackgroundTasks
 from cryptography.fernet import Fernet, InvalidToken
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Dict
 from datetime import datetime, timezone, timedelta
 from _compat import LlmChat, UserMessage, ImageContent
 from _compat import (
@@ -342,6 +342,29 @@ async def get_current_user(
         return user
     except jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+
+# ---- Reusable role-based authorization dependencies ----
+async def require_owner(current=Depends(get_current_user)):
+    """Owner-only route guard. 401 is already raised by get_current_user for
+    missing/invalid credentials; this raises 403 for the wrong role."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner role required")
+    return current
+
+
+def require_roles(*allowed_roles):
+    allowed = frozenset(allowed_roles)
+
+    async def _dep(current=Depends(get_current_user)):
+        if is_owner(current):
+            return current  # owner is super-admin
+        if current.get("role") not in allowed:
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        return current
+
+    return _dep
+
 
 # ====================== Health ======================
 
@@ -6299,6 +6322,7 @@ class SchoolSettingsUpdate(BaseModel):
     parent_detention_email_enabled: Optional[bool] = None
     parent_detention_email_from_name: Optional[str] = None
     nav_style: Optional[Literal["full", "compact", "hidden"]] = None
+    nav_section_defaults: Optional[Dict[str, bool]] = None
 
 
 async def _school_settings_doc(school_id: Optional[str]) -> dict:
@@ -6309,6 +6333,7 @@ async def _school_settings_doc(school_id: Optional[str]) -> dict:
         "parent_detention_email_enabled": bool(doc.get("parent_detention_email_enabled", False)),
         "parent_detention_email_from_name": doc.get("parent_detention_email_from_name") or "Your school",
         "nav_style": doc.get("nav_style", "full"),
+        "nav_section_defaults": doc.get("nav_section_defaults") or {},
     }
 
 
@@ -6329,6 +6354,31 @@ async def update_school_settings(payload: SchoolSettingsUpdate, current=Depends(
     sid = current.get("school_id") or "global"
     await db.school_settings.update_one({"school_id": sid}, {"$set": patch}, upsert=True)
     return await _school_settings_doc(sid)
+
+
+# ---- Per-user navigation preferences ----
+class NavPrefsUpdate(BaseModel):
+    prefs: Dict[str, bool]
+
+
+@api_router.get("/me/nav-prefs")
+async def get_my_nav_prefs(current=Depends(get_current_user)):
+    """Returns this user's own section visibility prefs plus the school-wide
+    defaults set by the owner. Frontend merges them (user pref wins)."""
+    user_prefs = current.get("nav_prefs") or {}
+    school = await _school_settings_doc(current.get("school_id"))
+    return {
+        "prefs": user_prefs,
+        "school_defaults": school.get("nav_section_defaults") or {},
+    }
+
+
+@api_router.patch("/me/nav-prefs")
+async def update_my_nav_prefs(payload: NavPrefsUpdate, current=Depends(get_current_user)):
+    clean = {str(k): bool(v) for k, v in payload.prefs.items()}
+    await db.users.update_one({"user_id": current["user_id"]}, {"$set": {"nav_prefs": clean}})
+    school = await _school_settings_doc(current.get("school_id"))
+    return {"prefs": clean, "school_defaults": school.get("nav_section_defaults") or {}}
 
 
 # ====================== Register router & middleware ======================

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
+import { homeForRole } from "@/lib/roleNavigation";
 import GlobalNav from "@/components/GlobalNav";
 import { GoogleLogo, Envelope, Lock, Warning, User } from "@phosphor-icons/react";
 
@@ -13,7 +14,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
-  const from = location.state?.from?.pathname || "/dashboard";
+  const from = location.state?.from?.pathname;
 
   const onSubmit = async (e) => {
     e.preventDefault();
@@ -21,12 +22,14 @@ export default function Login() {
     setLoading(true);
     try {
       // Allow username OR email login — both paths go through AuthContext so state is consistent
+      let loggedIn;
       if (identifier.includes("@")) {
-        await loginWithEmail(identifier, password);
+        loggedIn = await loginWithEmail(identifier, password);
       } else {
-        await loginWithIdentifier(identifier, password);
+        loggedIn = await loginWithIdentifier(identifier, password);
       }
-      navigate(from, { replace: true });
+      // Honour the page the user was bounced from; otherwise land on their role home.
+      navigate(from || homeForRole(loggedIn?.role), { replace: true });
     } catch (ex) {
       setErr(ex.response?.data?.detail || "Login failed");
     } finally {

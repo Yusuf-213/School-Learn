@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route, useLocation } from "react-router-dom";
 import "@/App.css";
 import { AuthProvider } from "@/context/AuthContext";
 import ProtectedRoute from "@/components/ProtectedRoute";
+import RoleRoute from "@/components/RoleRoute";
+import { STAFF_ROLES, OWNER_ONLY } from "@/lib/roleNavigation";
 import { Toaster } from "@/components/ui/sonner";
 import { applyA11yOnLoad } from "@/components/AccessibilityMenu";
 
@@ -41,6 +43,7 @@ import Parent from "@/pages/Parent";
 import ParentRequests from "@/pages/ParentRequests";
 import Compliance from "@/pages/Compliance";
 import Privacy from "@/pages/Privacy";
+import Settings from "@/pages/Settings";
 
 function AppRouter() {
   const location = useLocation();
@@ -61,28 +64,29 @@ function AppRouter() {
       <Route path="/pricing" element={<Pricing />} />
       <Route path="/billing/success" element={<ProtectedRoute><BillingSuccess /></ProtectedRoute>} />
       <Route path="/help" element={<ProtectedRoute><Help /></ProtectedRoute>} />
-      <Route path="/owner" element={<ProtectedRoute><Owner /></ProtectedRoute>} />
-      <Route path="/teacher" element={<ProtectedRoute><Teacher /></ProtectedRoute>} />
-      <Route path="/my-record" element={<ProtectedRoute><MyRecord /></ProtectedRoute>} />
+      <Route path="/owner" element={<RoleRoute allow={OWNER_ONLY}><Owner /></RoleRoute>} />
+      <Route path="/teacher" element={<RoleRoute allow={STAFF_ROLES}><Teacher /></RoleRoute>} />
+      <Route path="/my-record" element={<RoleRoute allow={["student", "owner"]}><MyRecord /></RoleRoute>} />
       <Route path="/dreams" element={<ProtectedRoute><Dreams /></ProtectedRoute>} />
       <Route path="/suggestions" element={<ProtectedRoute><Suggestions /></ProtectedRoute>} />
       <Route path="/safety" element={<Safety />} />
       <Route path="/contact" element={<Contact />} />
       <Route path="/dpa" element={<DPA />} />
       <Route path="/privacy" element={<Privacy />} />
-      <Route path="/owner/payouts" element={<ProtectedRoute><Payouts /></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+      <Route path="/owner/payouts" element={<RoleRoute allow={OWNER_ONLY}><Payouts /></RoleRoute>} />
       <Route path="/timetable" element={<ProtectedRoute><Timetable /></ProtectedRoute>} />
       <Route path="/homework" element={<ProtectedRoute><Homework /></ProtectedRoute>} />
       <Route path="/assessments" element={<ProtectedRoute><Assessments /></ProtectedRoute>} />
       <Route path="/practice" element={<ProtectedRoute><Practice /></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
       <Route path="/announcements" element={<ProtectedRoute><Announcements /></ProtectedRoute>} />
-      <Route path="/classes" element={<ProtectedRoute><ClassesRoster /></ProtectedRoute>} />
+      <Route path="/classes" element={<RoleRoute allow={STAFF_ROLES}><ClassesRoster /></RoleRoute>} />
       <Route path="/verify-domain" element={<VerifyDomain />} />
       <Route path="/legal" element={<Legal />} />
-      <Route path="/parent" element={<ProtectedRoute><Parent /></ProtectedRoute>} />
-      <Route path="/parent-requests" element={<ProtectedRoute><ParentRequests /></ProtectedRoute>} />
-      <Route path="/compliance" element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
+      <Route path="/parent" element={<RoleRoute allow={["parent", "owner"]}><Parent /></RoleRoute>} />
+      <Route path="/parent-requests" element={<RoleRoute allow={STAFF_ROLES}><ParentRequests /></RoleRoute>} />
+      <Route path="/compliance" element={<RoleRoute allow={OWNER_ONLY}><Compliance /></RoleRoute>} />
       <Route path="*" element={<Landing />} />
     </Routes>
   );

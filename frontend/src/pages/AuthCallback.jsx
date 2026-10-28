@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import { homeForRole } from "@/lib/roleNavigation";
 
 export default function AuthCallback() {
   const navigate = useNavigate();
@@ -23,8 +24,9 @@ export default function AuthCallback() {
       try {
         const { data } = await api.post("/auth/session", { session_id });
         setUser(data.user);
-        window.history.replaceState({}, "", "/dashboard");
-        navigate("/dashboard", { replace: true, state: { user: data.user } });
+        const dest = homeForRole(data.user?.role);
+        window.history.replaceState({}, "", dest);
+        navigate(dest, { replace: true, state: { user: data.user } });
       } catch (e) {
         navigate("/login", { replace: true });
       }

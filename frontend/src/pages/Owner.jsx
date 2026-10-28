@@ -8,6 +8,7 @@ import PromoCodesPanel from "./owner/PromoCodesPanel";
 import PaymentLinksPanel from "./owner/PaymentLinksPanel";
 import DpaAcceptancesPanel from "./owner/DpaAcceptancesPanel";
 import GuardianAuditPanel from "./owner/GuardianAuditPanel";
+import { ComplianceContent } from "./Compliance";
 
 function PromoAnalyticsCard() {
   const [data, setData] = useState(null);
@@ -118,6 +119,7 @@ export default function Owner() {
           <TabBtn active={tab === "links"} onClick={() => setTab("links")} testid="tab-links"><LinkIcon size={14} weight="bold" /> Payment Links</TabBtn>
           <TabBtn active={tab === "dpa"} onClick={() => setTab("dpa")} testid="tab-dpa"><ShieldCheck size={14} weight="bold" /> DPA Acceptances</TabBtn>
           <TabBtn active={tab === "guardian"} onClick={() => setTab("guardian")} testid="tab-guardian"><UsersFour size={14} weight="bold" /> Guardian Audit</TabBtn>
+          <TabBtn active={tab === "compliance"} onClick={() => setTab("compliance")} testid="tab-compliance"><ShieldCheck size={14} weight="bold" /> Compliance</TabBtn>
         </div>
 
         {tab === "overview" && (
@@ -242,6 +244,7 @@ export default function Owner() {
         {tab === "links" && <PaymentLinksPanel />}
         {tab === "dpa" && <DpaAcceptancesPanel />}
         {tab === "guardian" && <GuardianAuditPanel />}
+        {tab === "compliance" && <ComplianceContent embedded />}
       </div>
     </AppLayout>
   );

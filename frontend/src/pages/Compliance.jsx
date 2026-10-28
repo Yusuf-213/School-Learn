@@ -556,7 +556,7 @@ function ChecklistSection({ items, refresh }) {
 }
 
 // ---- Page ----------------------------------------------------------------
-export default function Compliance() {
+export function ComplianceContent({ embedded = false }) {
   const { user } = useAuth();
   const [recipients, setRecipients] = useState([]);
   const [incidents, setIncidents] = useState([]);
@@ -699,20 +699,20 @@ export default function Compliance() {
 
   if (error) {
     return (
-      <AppLayout>
-        <div className="max-w-3xl mx-auto p-6">
-          <div className="brutal-card p-6 bg-rose-50" data-testid="compliance-error">
-            <h2 className="font-display font-black text-2xl mb-2">Access restricted</h2>
-            <p className="text-sm text-slate-700">{error}</p>
-          </div>
+      <div className="max-w-3xl mx-auto p-6">
+        <div className="brutal-card p-6 bg-rose-50" data-testid="compliance-error">
+          <h2 className="font-display font-black text-2xl mb-2">Access restricted</h2>
+          <p className="text-sm text-slate-700">{error}</p>
         </div>
-      </AppLayout>
+      </div>
     );
   }
 
   return (
-    <AppLayout>
-      <div className="max-w-7xl mx-auto p-4 md:p-6 space-y-6" data-testid="compliance-page">
+    <div
+      className={`${embedded ? "" : "max-w-7xl mx-auto p-4 md:p-6"} space-y-6`}
+      data-testid="compliance-page"
+    >
         {/* Header */}
         <header className="brutal-card p-5 bg-butter">
           <div className="flex items-start justify-between gap-3 flex-wrap mb-2">
@@ -895,6 +895,13 @@ export default function Compliance() {
           controller-facing database and is <em>not</em> exposed to any US recipient.
         </footer>
       </div>
+  );
+}
+
+export default function Compliance() {
+  return (
+    <AppLayout>
+      <ComplianceContent />
     </AppLayout>
   );
 }
