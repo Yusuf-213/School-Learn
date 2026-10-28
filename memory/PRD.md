@@ -4,6 +4,34 @@ Learnify is a UK school management platform — preschool through university —
 covering AI tutoring, lesson planning, homework/assignment grading, parent portal,
 Stripe billing, safeguarding & UK GDPR compliance.
 
+## Iteration 29 (2026-03-XX) — Real DPF registry probe · Auditor share links · Weekly digest · School settings · Kyber PQC
+
+### Compliance follow-ups
+- **Real DPF Registry Ping** — `_run_dpf_verify` now HTTP-GETs `dataprivacyframework.gov/participant-search?query=…&status=Active` per certified recipient (best-effort, 8s timeout, non-fatal). Response is parsed for "no results / no records" → `dpf_registry_active=false`; a cert can now be lapsed by **either** the stored expiry date **or** a negative registry probe. `dpf_lapse_reason` stamped on the row so the audit trail shows which trigger fired.
+- **Auditor Share Link** — `POST /api/compliance/share` (owner) mints a `secrets.token_urlsafe(32)` token in `db.compliance_share_tokens` with a configurable TTL (default 72h, capped 30d). `GET /api/compliance/shared/{token}/pdf` is **public** (no auth), verifies TTL + `revoked=false`, increments a `downloads` counter, and streams the same signed PDF. Owner endpoints: `GET /api/compliance/share` (list) and `DELETE /api/compliance/share/{token}` (revoke). Frontend gets a "Create 72-hour link" button, active/expired pills, one-click Copy, and revoke.
+- **Weekly Digest** — new cron in `.emergent/crons.yml` (`weekly-digest`, Mondays 07:00 UTC) → `POST /api/cron/weekly-digest` (Bearer-guarded, background-tasked). `_run_weekly_digest` lists DPF certs expiring and TRAs due within 30 days, plus any recipients with no mechanism, and emails the owner via the compliance email helper. All-clear path also sends a summary. Owner-only manual trigger at `POST /api/compliance/run-weekly-digest-now`.
+
+### School settings scaffold
+- New `db.school_settings` collection (per `school_id`) with `parent_detention_email_enabled`, `parent_detention_email_from_name`, `nav_style` (`full` / `compact` / `hidden`).
+- `GET /api/school/settings` (staff), `PATCH /api/school/settings` (owner or school-admin) — payload validated with `SchoolSettingsUpdate`.
+- Modified `set_detention` to fan-out an email to every approved parent guardian (`db.parent_links` where `child_user_id=student & status=approved`) when the toggle is on. Sent via Resend proxy with `from_name` = school setting.
+- Compliance dashboard gains a **School settings** section with the parent-detention toggle.
+
+### Post-Quantum Crypto (Kyber / ML-KEM-1024)
+- Added `kyber-py>=1.2.0` to `backend/requirements.txt` (pure-Python NIST FIPS 203 implementation — no C-extension pain on Render/Railway).
+- New helper `backend/pqc_kyber.py`: `selftest()`, `generate_keypair()`, `encapsulate(pk_b64)`. All base64-safe JSON in/out.
+- Runs `selftest()` at server import — result cached in `_PQC_STATUS_CACHE` (algorithm, standard, public-key + ciphertext + shared-secret byte lengths, `roundtrip_ok`).
+- API surface:
+  - `GET /api/compliance/pqc-status` (any signed-in user) — returns the boot-time selftest so the dashboard can render the badge.
+  - `POST /api/compliance/pqc-keypair` (owner) — mints a fresh keypair.
+  - `POST /api/compliance/pqc-encapsulate` (owner) — given an auditor's public key, returns the KEM ciphertext + shared secret so the owner can wrap the PDF with an AEAD keyed by the shared secret for PQ-safe evidence transfer.
+- Frontend badge on the Compliance header shows `PQ-ready · ML-KEM-1024` when the roundtrip is green.
+
+### Verified
+- `pip install kyber-py` + `ML_KEM_1024.keygen/encaps/decaps` roundtrip OK (32-byte shared secret; 1568-byte public key / ciphertext).
+- All 6 new endpoints returned expected shapes via curl (share link create + public download + weekly digest + cron + school-settings GET/PATCH + pqc-status + pqc-keypair + pqc-encapsulate).
+
+
 ## Iteration 28 (2026-03-XX) — Compliance PDF export · DPF auto-verify cron · Sub-processor notifier
 
 ### 1. Compliance PDF export

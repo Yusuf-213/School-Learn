@@ -13,6 +13,7 @@ import re
 import pyotp  # legacy; kept for compat but no active endpoint uses it now
 import hashlib
 import hmac
+import secrets
 from html import escape as escape_html
 from fastapi import BackgroundTasks
 from cryptography.fernet import Fernet, InvalidToken
@@ -1961,7 +1962,7 @@ async def bulk_import_students(file: UploadFile = File(...), current=Depends(get
       • Skips duplicates (same email in the same school).
       • Returns a per-row result so SLT sees exactly what happened.
     Only SLT (school_admin) + owner can run this."""
-    import csv, io, secrets, string
+    import csv, io, string
     if not is_owner(current) and current.get("role") != ROLE_SCHOOL_ADMIN:
         raise HTTPException(status_code=403, detail="School admin only")
     sid = current.get("school_id")
@@ -4359,6 +4360,46 @@ async def set_detention(req: DetentionCreate, current=Depends(require_authed_rol
         )
     except Exception:
         logging.exception("failed to notify student of detention")
+    # Optionally email linked parents (opt-in, per-school toggle).
+    try:
+        sid = current.get("school_id") or "global"
+        settings_doc = await db.school_settings.find_one({"school_id": sid}) or {}
+        if settings_doc.get("parent_detention_email_enabled"):
+            from_name = settings_doc.get("parent_detention_email_from_name") or "Your school"
+            student_row = await db.users.find_one({"user_id": req.student_user_id}, {"_id": 0}) or {}
+            student_name = student_row.get("name") or student_row.get("username") or "your child"
+            parent_links = await db.parent_links.find(
+                {"child_user_id": req.student_user_id, "status": "approved"}, {"_id": 0},
+            ).to_list(20)
+            for link in parent_links:
+                to_email = link.get("parent_email")
+                if not to_email:
+                    continue
+                subject = f"[{from_name}] Detention set for {student_name}"
+                html = (
+                    f'<div style="font-family:Arial,sans-serif;padding:16px;max-width:640px">'
+                    f'<h2 style="margin:0 0 8px">Detention notice — {escape_html(student_name)}</h2>'
+                    f'<p>A <b>{req.duration_minutes}-minute detention</b> has been scheduled for <b>{escape_html(req.date)}</b>.</p>'
+                    f'<p><b>Reason:</b> {escape_html(req.reason)}</p>'
+                    f'<p>Set by: {escape_html(current.get("name") or "school staff")}.</p>'
+                    f'<p>Please contact the school directly if you have questions or concerns.</p>'
+                    f'<p style="font-size:12px;color:#64748b">Sent by {escape_html(from_name)} via Learnify. Transactional email — we never ask for passwords or card details.</p>'
+                    f'</div>'
+                )
+                try:
+                    key = os.environ.get("EMERGENT_EMAIL_KEY")
+                    if key:
+                        async with httpx.AsyncClient(timeout=30) as client:
+                            resp = await client.post(
+                                "https://integrations.emergentagent.com/api/v1/email/send",
+                                headers={"X-Email-Key": key},
+                                json={"to": [to_email], "subject": subject, "html": html, "from_name": from_name},
+                            )
+                        resp.raise_for_status()
+                except Exception:
+                    logging.exception("parent detention email failed")
+    except Exception:
+        logging.exception("parent detention email pathway failed")
     return doc
 
 @api_router.get("/teacher/detentions")
@@ -5938,37 +5979,75 @@ async def _notify_once(kind: str, recipient_id: str, date_bucket: str, subject: 
 
 async def _run_dpf_verify() -> dict:
     """Sweep every US recipient. Any DPF cert whose `dpf_expiry_date` has passed
-    is auto-marked inactive. TRAs older than 12 months get flagged. Owner emails
-    on both — deduped by day."""
+    is auto-marked inactive. TRAs older than 12 months get flagged. Additionally
+    ping the DPF Framework website per recipient so lapses are caught even when
+    the stored expiry date is optimistic. Owner emails on both — deduped by day."""
     now = datetime.now(timezone.utc)
     today_bucket = now.strftime("%Y-%m-%d")
     rows = await db.us_recipients.find({}, {"_id": 0}).to_list(1000)
     marked_inactive: List[dict] = []
     tra_flagged: List[dict] = []
+    registry_hits: List[dict] = []
     emails_sent = 0
+
+    async def _dpf_registry_active(company: str) -> Optional[bool]:
+        """Best-effort probe against the public DPF participant search.
+        Returns True if a live participant record exists, False if the search
+        page shows an inactive/no-result, None if the network probe fails."""
+        try:
+            q = re.sub(r"\s+", "+", company.strip())
+            url = f"https://www.dataprivacyframework.gov/participant-search?query={q}&qt=Company&status=Active"
+            async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
+                r = await client.get(url, headers={"User-Agent": "Learnify-Compliance/1.0"})
+            if r.status_code >= 500:
+                return None
+            body = (r.text or "").lower()
+            # If the results page contains "no results" or "no records" → inactive.
+            if any(needle in body for needle in ("no results", "no records", "0 results")):
+                return False
+            # Presence of an "Active" status marker near the company name is a hint.
+            if "active" in body and company.lower() in body:
+                return True
+            return None
+        except Exception:
+            return None
 
     for row in rows:
         rid = row.get("id")
         # 1) DPF lapse — flip dpf_certified to False and stamp verification.
         exp = _parse_iso_date(row.get("dpf_expiry_date"))
         was_certified = bool(row.get("dpf_certified"))
-        if was_certified and exp is not None and exp < now:
+        registry_active = await _dpf_registry_active(row.get("company_name") or "") if was_certified else None
+        expired_by_date = was_certified and exp is not None and exp < now
+        expired_by_registry = was_certified and registry_active is False
+
+        if registry_active is not None:
+            registry_hits.append({"id": rid, "company_name": row.get("company_name"), "active": registry_active})
+
+        if was_certified and (expired_by_date or expired_by_registry):
+            reason = "expiry_date_past" if expired_by_date else "registry_inactive"
             await db.us_recipients.update_one(
                 {"id": rid},
                 {"$set": {
                     "dpf_certified": False,
                     "dpf_lapsed_at": now.isoformat(),
+                    "dpf_lapse_reason": reason,
                     "dpf_last_verified_at": now.isoformat(),
+                    "dpf_registry_active": registry_active,
                     "updated_at": now.isoformat(),
                 }},
             )
-            marked_inactive.append({"id": rid, "company_name": row.get("company_name"), "expired_on": row.get("dpf_expiry_date")})
+            marked_inactive.append({
+                "id": rid, "company_name": row.get("company_name"),
+                "expired_on": row.get("dpf_expiry_date"), "reason": reason,
+            })
             subject = f"[Compliance] DPF cert lapsed — {row.get('company_name')}"
             html = (
                 f'<div style="font-family:Arial,sans-serif;padding:16px;max-width:640px">'
                 f'<h2 style="color:#b91c1c;margin:0 0 8px">DPF certification lapsed</h2>'
                 f'<p><b>{escape_html(row.get("company_name") or "Unknown recipient")}</b> — '
-                f'expiry date <b>{escape_html(row.get("dpf_expiry_date") or "unknown")}</b>. '
+                f'reason: <b>{reason.replace("_", " ")}</b>. '
+                f'Expiry on record: <b>{escape_html(row.get("dpf_expiry_date") or "unknown")}</b>. '
                 f'Learnify has auto-marked this recipient as no longer DPF-certified.</p>'
                 f'<p>Next step: renew the cert on the DPF Framework website, or execute a UK IDTA / SCC '
                 f'and refresh the Transfer Risk Assessment.</p>'
@@ -5982,10 +6061,12 @@ async def _run_dpf_verify() -> dict:
             except Exception as e:
                 logging.error(f"notify dpf_lapse failed: {e}")
         else:
-            # Also mark last_verified_at so operators can see the cron is alive.
             await db.us_recipients.update_one(
                 {"id": rid},
-                {"$set": {"dpf_last_verified_at": now.isoformat()}},
+                {"$set": {
+                    "dpf_last_verified_at": now.isoformat(),
+                    "dpf_registry_active": registry_active,
+                }},
             )
 
         # 2) TRA drift — flag when the last TRA crossed 12 months.
@@ -5993,7 +6074,6 @@ async def _run_dpf_verify() -> dict:
         if tra is not None:
             days_old = (now - tra).days
             if days_old > 365:
-                # Bucket by month so we notify at most once/month per recipient.
                 month_bucket = now.strftime("%Y-%m")
                 tra_flagged.append({"id": rid, "company_name": row.get("company_name"), "days_old": days_old})
                 subject = f"[Compliance] TRA is {days_old} days old — {row.get('company_name')}"
@@ -6019,6 +6099,7 @@ async def _run_dpf_verify() -> dict:
         "checked": len(rows),
         "marked_inactive": marked_inactive,
         "tra_flagged": tra_flagged,
+        "registry_probes": registry_hits,
         "emails_sent": emails_sent,
     }
 
@@ -6056,7 +6137,246 @@ async def compliance_run_verify_now(current=Depends(get_current_user)):
     return await _run_dpf_verify()
 
 
+# ---- Auditor share link (time-boxed, tokenised, public PDF) ----
+
+class ShareLinkCreate(BaseModel):
+    ttl_hours: int = 72
+    label: Optional[str] = None
+
+
+@api_router.post("/compliance/share")
+async def compliance_create_share(payload: ShareLinkCreate, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    ttl = max(1, min(int(payload.ttl_hours or 72), 24 * 30))
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    doc = {
+        "token": token,
+        "label": (payload.label or "auditor")[:80],
+        "created_by": current.get("email"),
+        "created_at": now.isoformat(),
+        "expires_at": (now + timedelta(hours=ttl)).isoformat(),
+        "downloads": 0,
+        "revoked": False,
+    }
+    await db.compliance_share_tokens.insert_one(doc)
+    doc.pop("_id", None)
+    base = os.environ.get("PUBLIC_APP_URL", "").rstrip("/")
+    doc["public_url"] = f"{base}/api/compliance/shared/{token}/pdf"
+    return doc
+
+
+@api_router.get("/compliance/share")
+async def compliance_list_shares(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    rows = await db.compliance_share_tokens.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    now = datetime.now(timezone.utc)
+    base = os.environ.get("PUBLIC_APP_URL", "").rstrip("/")
+    for r in rows:
+        exp = _parse_iso_date(r.get("expires_at"))
+        r["active"] = (not r.get("revoked")) and exp is not None and exp >= now
+        r["public_url"] = f"{base}/api/compliance/shared/{r['token']}/pdf"
+    return {"links": rows}
+
+
+@api_router.delete("/compliance/share/{token}")
+async def compliance_revoke_share(token: str, current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    res = await db.compliance_share_tokens.update_one({"token": token}, {"$set": {"revoked": True}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Token not found")
+    return {"ok": True}
+
+
+@api_router.get("/compliance/shared/{token}/pdf")
+async def compliance_shared_pdf(token: str):
+    """PUBLIC. Time-boxed, read-only PDF snapshot for external auditors."""
+    row = await db.compliance_share_tokens.find_one({"token": token})
+    if not row or row.get("revoked"):
+        raise HTTPException(status_code=404, detail="Link not found or revoked")
+    exp = _parse_iso_date(row.get("expires_at"))
+    if exp is None or exp < datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="Link expired")
+    await db.compliance_share_tokens.update_one(
+        {"token": token},
+        {"$inc": {"downloads": 1}, "$set": {"last_downloaded_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    # Reuse the same PDF builder — call as anonymous "owner-equivalent" for report generation.
+    return await compliance_export_pdf(current={"user_id": row.get("created_by"), "email": row.get("created_by"), "role": ROLE_OWNER})
+
+
+# ---- Weekly digest (Monday-morning summary, cron) ----
+
+async def _run_weekly_digest() -> dict:
+    now = datetime.now(timezone.utc)
+    horizon = now + timedelta(days=30)
+    rows = await db.us_recipients.find({}, {"_id": 0}).to_list(1000)
+    dpf_soon, tra_soon, red = [], [], []
+    for r in rows:
+        annotated = _annotate_recipient(r)
+        if annotated["status"] == "red":
+            red.append(annotated)
+        exp = _parse_iso_date(r.get("dpf_expiry_date"))
+        if r.get("dpf_certified") and exp is not None and now <= exp <= horizon:
+            dpf_soon.append({"company": r["company_name"], "expires": r["dpf_expiry_date"], "days": (exp - now).days})
+        tra = _parse_iso_date(r.get("tra_date"))
+        if tra is not None:
+            due = tra + timedelta(days=365)
+            if now <= due <= horizon:
+                tra_soon.append({"company": r["company_name"], "due": due.date().isoformat(), "days": (due - now).days})
+
+    if not (dpf_soon or tra_soon or red):
+        html = (
+            '<div style="font-family:Arial,sans-serif;padding:16px;max-width:640px">'
+            '<h2 style="margin:0 0 8px">Weekly compliance digest — all clear</h2>'
+            f'<p>No DPF certifications expiring in the next 30 days and no TRAs falling due. Total US recipients: <b>{len(rows)}</b>.</p>'
+            '<p style="font-size:12px;color:#64748b">Sent by Learnify Compliance. Transactional email — we never ask for passwords or card details.</p>'
+            '</div>'
+        )
+        subject = "[Compliance] Weekly digest — all clear"
+    else:
+        def _section(title, items, render):
+            if not items:
+                return ""
+            body = "".join(f"<li>{render(i)}</li>" for i in items)
+            return f'<h3 style="margin:14px 0 4px">{escape_html(title)}</h3><ul>{body}</ul>'
+
+        html_body = (
+            _section(f"DPF expiring within 30 days ({len(dpf_soon)})", dpf_soon,
+                     lambda i: f"<b>{escape_html(i['company'])}</b> — expires {escape_html(i['expires'])} ({i['days']}d)")
+            + _section(f"TRAs due within 30 days ({len(tra_soon)})", tra_soon,
+                       lambda i: f"<b>{escape_html(i['company'])}</b> — due {escape_html(i['due'])} ({i['days']}d)")
+            + _section(f"Recipients with no mechanism ({len(red)})", red,
+                       lambda i: f"<b>{escape_html(i['company_name'])}</b>")
+        )
+        html = (
+            '<div style="font-family:Arial,sans-serif;padding:16px;max-width:640px">'
+            '<h2 style="margin:0 0 8px">Weekly compliance digest</h2>'
+            f'{html_body}'
+            '<p style="font-size:12px;color:#64748b;margin-top:16px">Sent by Learnify Compliance. Transactional email — we never ask for passwords or card details.</p>'
+            '</div>'
+        )
+        subject = "[Compliance] Weekly compliance digest"
+
+    email_id = await _send_owner_compliance_email(subject, html)
+    return {
+        "run_at": now.isoformat(),
+        "total_recipients": len(rows),
+        "dpf_expiring_30d": len(dpf_soon),
+        "tra_due_30d": len(tra_soon),
+        "red": len(red),
+        "email_id": email_id,
+    }
+
+
+@api_router.post("/cron/weekly-digest")
+async def cron_weekly_digest(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(default=None),
+):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not _cron_authorized(authorization):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    run_id = request.headers.get("X-Webhook-Id") or uuid.uuid4().hex
+    background_tasks.add_task(_run_weekly_digest)
+    return {"ok": True, "queued": True, "run_id": run_id}
+
+
+@api_router.post("/compliance/run-weekly-digest-now")
+async def compliance_run_weekly_now(current=Depends(get_current_user)):
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    return await _run_weekly_digest()
+
+
+# ====================== School Settings (parent detention email + more) ======================
+
+class SchoolSettingsUpdate(BaseModel):
+    parent_detention_email_enabled: Optional[bool] = None
+    parent_detention_email_from_name: Optional[str] = None
+    nav_style: Optional[Literal["full", "compact", "hidden"]] = None
+
+
+async def _school_settings_doc(school_id: Optional[str]) -> dict:
+    sid = school_id or "global"
+    doc = await db.school_settings.find_one({"school_id": sid}) or {}
+    return {
+        "school_id": sid,
+        "parent_detention_email_enabled": bool(doc.get("parent_detention_email_enabled", False)),
+        "parent_detention_email_from_name": doc.get("parent_detention_email_from_name") or "Your school",
+        "nav_style": doc.get("nav_style", "full"),
+    }
+
+
+@api_router.get("/school/settings")
+async def get_school_settings(current=Depends(get_current_user)):
+    if not (is_owner(current) or current.get("role") in {ROLE_SCHOOL_ADMIN, ROLE_TEACHER}):
+        raise HTTPException(status_code=403, detail="Staff only")
+    return await _school_settings_doc(current.get("school_id"))
+
+
+@api_router.patch("/school/settings")
+async def update_school_settings(payload: SchoolSettingsUpdate, current=Depends(get_current_user)):
+    if not (is_owner(current) or current.get("role") == ROLE_SCHOOL_ADMIN):
+        raise HTTPException(status_code=403, detail="Owner or school-admin only")
+    patch = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not patch:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    sid = current.get("school_id") or "global"
+    await db.school_settings.update_one({"school_id": sid}, {"$set": patch}, upsert=True)
+    return await _school_settings_doc(sid)
+
+
 # ====================== Register router & middleware ======================
+
+# Post-quantum crypto — proves ML-KEM-1024 is available at boot and exposes an
+# owner-facing status endpoint so the Compliance dashboard can show a PQ-ready badge.
+from pqc_kyber import selftest as _pqc_selftest, encapsulate as _pqc_encapsulate, generate_keypair as _pqc_keypair, is_available as _pqc_available
+
+_PQC_STATUS_CACHE = _pqc_selftest()
+
+
+class PqcEncapRequest(BaseModel):
+    public_key_b64: str
+
+
+@api_router.get("/compliance/pqc-status")
+async def compliance_pqc_status(current=Depends(get_current_user)):
+    """Return the pod's post-quantum readiness. Any signed-in user can read this so
+    the Compliance dashboard header (and downstream audits) can prove the app has a
+    NIST FIPS 203 (ML-KEM-1024) KEM available."""
+    return _PQC_STATUS_CACHE
+
+
+@api_router.post("/compliance/pqc-keypair")
+async def compliance_pqc_keypair(current=Depends(get_current_user)):
+    """Owner-only. Mint a fresh ML-KEM-1024 keypair — auditors can hand us the public
+    key and we encapsulate a shared secret they can use for PQ-safe evidence transfer."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    if not _pqc_available():
+        raise HTTPException(status_code=503, detail="Kyber unavailable on this pod")
+    return _pqc_keypair()
+
+
+@api_router.post("/compliance/pqc-encapsulate")
+async def compliance_pqc_encapsulate(payload: PqcEncapRequest, current=Depends(get_current_user)):
+    """Owner-only. Given an auditor's ML-KEM-1024 public key, return the KEM
+    ciphertext and the derived shared secret (base64). Use the secret as a
+    symmetric key to wrap the compliance PDF for PQ-safe delivery."""
+    if not is_owner(current):
+        raise HTTPException(status_code=403, detail="Owner only")
+    if not _pqc_available():
+        raise HTTPException(status_code=503, detail="Kyber unavailable on this pod")
+    try:
+        return _pqc_encapsulate(payload.public_key_b64)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Encapsulation failed: {e}")
+
 
 app.include_router(api_router)
 

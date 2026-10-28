@@ -17,6 +17,11 @@ import {
   CircleNotch,
   FilePdf,
   ArrowClockwise,
+  Link as LinkIcon,
+  Copy,
+  Lock,
+  EnvelopeSimple,
+  Gear,
 } from "@phosphor-icons/react";
 
 // ---- helpers --------------------------------------------------------------
@@ -557,10 +562,14 @@ export default function Compliance() {
   const [incidents, setIncidents] = useState([]);
   const [checklist, setChecklist] = useState([]);
   const [alerts, setAlerts] = useState(null);
+  const [pqc, setPqc] = useState(null);
+  const [shareLinks, setShareLinks] = useState([]);
+  const [schoolSettings, setSchoolSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [downloading, setDownloading] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [creatingShare, setCreatingShare] = useState(false);
 
   const downloadPdf = async () => {
     setDownloading(true);
@@ -598,18 +607,72 @@ export default function Compliance() {
     }
   };
 
+  const createShareLink = async () => {
+    setCreatingShare(true);
+    try {
+      const { data } = await api.post("/compliance/share", { ttl_hours: 72, label: "auditor" });
+      toast.success("Share link created — valid for 72h");
+      try {
+        await navigator.clipboard.writeText(data.public_url);
+      } catch {}
+      await loadAll();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Could not create link");
+    } finally {
+      setCreatingShare(false);
+    }
+  };
+
+  const revokeShare = async (token) => {
+    if (!window.confirm("Revoke this share link?")) return;
+    try {
+      await api.delete(`/compliance/share/${token}`);
+      toast.success("Link revoked");
+      await loadAll();
+    } catch {
+      toast.error("Revoke failed");
+    }
+  };
+
+  const copyLink = async (url) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Copied to clipboard");
+    } catch {
+      toast.error("Copy failed — paste from URL bar");
+    }
+  };
+
+  const toggleParentDetentionEmail = async () => {
+    try {
+      const { data } = await api.patch("/school/settings", {
+        parent_detention_email_enabled: !(schoolSettings?.parent_detention_email_enabled),
+      });
+      setSchoolSettings(data);
+      toast.success(`Parent detention emails ${data.parent_detention_email_enabled ? "enabled" : "disabled"}`);
+    } catch {
+      toast.error("Could not update setting");
+    }
+  };
+
   const loadAll = async () => {
     try {
-      const [r, i, c, a] = await Promise.all([
+      const [r, i, c, a, p, s, ss] = await Promise.all([
         api.get("/compliance/recipients"),
         api.get("/compliance/cloud-act"),
         api.get("/compliance/checklist"),
         api.get("/compliance/alerts"),
+        api.get("/compliance/pqc-status").catch(() => ({ data: null })),
+        api.get("/compliance/share").catch(() => ({ data: { links: [] } })),
+        api.get("/school/settings").catch(() => ({ data: null })),
       ]);
       setRecipients(r.data.recipients || []);
       setIncidents(i.data.incidents || []);
       setChecklist(c.data.items || []);
       setAlerts(a.data);
+      setPqc(p.data);
+      setShareLinks(s.data?.links || []);
+      setSchoolSettings(ss.data);
       setError(null);
     } catch (err) {
       if (err?.response?.status === 403) {
@@ -687,6 +750,11 @@ export default function Compliance() {
             CLOUD Act exposure — with alerts when your DPF certifications are about to expire or your Transfer Risk
             Assessments go stale.
           </p>
+          {pqc?.roundtrip_ok && (
+            <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full border-2 border-indigo-800 bg-indigo-50 text-xs font-bold text-indigo-900" data-testid="pqc-badge" title={`${pqc.standard} · shared-secret ${pqc.shared_secret_bytes}B`}>
+              <Lock size={13} weight="fill" /> PQ-ready · {pqc.algorithm}
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-2 mt-4 max-w-xl">
             <div className="rounded-md border-2 border-emerald-700 bg-emerald-100 p-2 text-center">
               <div className="text-[10px] uppercase tracking-widest font-bold text-emerald-900">DPF certified</div>
@@ -720,6 +788,105 @@ export default function Compliance() {
             <RecipientsSection recipients={recipients} refresh={loadAll} />
             <CloudActSection incidents={incidents} refresh={loadAll} />
             <ChecklistSection items={checklist} refresh={loadAll} />
+
+            {/* ---- Auditor share links ---- */}
+            <section className="brutal-card p-5 bg-white" data-testid="section-share-links">
+              <header className="flex items-center gap-2 mb-1">
+                <LinkIcon size={22} weight="bold" />
+                <h2 className="font-display font-extrabold text-2xl">Auditor share links</h2>
+              </header>
+              <p className="text-sm text-slate-600 mb-4">
+                Time-boxed, read-only public URLs to the signed compliance PDF. Auditors don't need a Learnify login.
+              </p>
+              <button
+                onClick={createShareLink}
+                disabled={creatingShare}
+                data-testid="create-share-btn"
+                className="brutal-btn bg-indigo-100 hover:bg-indigo-200 text-sm inline-flex items-center gap-1.5 py-1.5 mb-3"
+              >
+                <Plus size={14} weight="bold" /> {creatingShare ? "Creating…" : "Create 72-hour link"}
+              </button>
+              {shareLinks.length === 0 ? (
+                <div className="text-sm text-slate-600 italic">No share links yet.</div>
+              ) : (
+                <ul className="space-y-2">
+                  {shareLinks.map((s) => (
+                    <li
+                      key={s.token}
+                      className={`rounded-md border-2 border-ink p-3 ${s.active ? "bg-white" : "bg-slate-100"}`}
+                      data-testid={`share-row-${s.token}`}
+                    >
+                      <div className="flex items-start justify-between gap-3 flex-wrap">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold flex items-center gap-2 flex-wrap">
+                            {s.active ? (
+                              <span className="px-1.5 py-0.5 rounded border-2 border-emerald-700 bg-emerald-100 text-emerald-900">ACTIVE</span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded border-2 border-slate-500 bg-slate-200 text-slate-700">EXPIRED / REVOKED</span>
+                            )}
+                            <span>{s.label}</span>
+                            <span className="text-slate-600">· expires {fmtDate(s.expires_at)}</span>
+                            <span className="text-slate-600">· {s.downloads} download(s)</span>
+                          </div>
+                          <div className="mt-1 font-mono text-xs break-all">{s.public_url}</div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => copyLink(s.public_url)}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded border-2 border-ink bg-white text-xs font-bold"
+                          >
+                            <Copy size={12} /> Copy
+                          </button>
+                          {s.active && (
+                            <button
+                              onClick={() => revokeShare(s.token)}
+                              data-testid={`share-revoke-${s.token}`}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded border-2 border-ink bg-white hover:bg-rose-100 text-xs font-bold"
+                            >
+                              <Trash size={12} /> Revoke
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            {/* ---- School settings ---- */}
+            {schoolSettings && (
+              <section className="brutal-card p-5 bg-white" data-testid="section-school-settings">
+                <header className="flex items-center gap-2 mb-1">
+                  <Gear size={22} weight="bold" />
+                  <h2 className="font-display font-extrabold text-2xl">School settings</h2>
+                </header>
+                <p className="text-sm text-slate-600 mb-4">
+                  Toggles the school controls — persisted per school.
+                </p>
+                <label className="flex items-start gap-3 p-3 rounded-md border-2 border-ink bg-lavender/40" data-testid="parent-detention-toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={!!schoolSettings.parent_detention_email_enabled}
+                    onChange={toggleParentDetentionEmail}
+                    data-testid="parent-detention-toggle"
+                    className="mt-1"
+                  />
+                  <div>
+                    <div className="font-semibold flex items-center gap-2">
+                      <EnvelopeSimple size={16} weight="bold" /> Email parents when a detention is set
+                    </div>
+                    <div className="text-xs text-slate-700 mt-1">
+                      When enabled, every approved parent guardian linked to the pupil receives an automated email
+                      with the detention reason, date, and duration. Sent as
+                      <span className="font-mono px-1 py-0.5 rounded bg-white border">
+                        {" "}{schoolSettings.parent_detention_email_from_name}
+                      </span>.
+                    </div>
+                  </div>
+                </label>
+              </section>
+            )}
           </>
         )}
 

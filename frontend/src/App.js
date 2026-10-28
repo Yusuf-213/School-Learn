@@ -40,6 +40,7 @@ import Legal from "@/pages/Legal";
 import Parent from "@/pages/Parent";
 import ParentRequests from "@/pages/ParentRequests";
 import Compliance from "@/pages/Compliance";
+import Privacy from "@/pages/Privacy";
 
 function AppRouter() {
   const location = useLocation();
@@ -68,7 +69,7 @@ function AppRouter() {
       <Route path="/safety" element={<Safety />} />
       <Route path="/contact" element={<Contact />} />
       <Route path="/dpa" element={<DPA />} />
-      <Route path="/privacy" element={<DPA />} />
+      <Route path="/privacy" element={<Privacy />} />
       <Route path="/owner/payouts" element={<ProtectedRoute><Payouts /></ProtectedRoute>} />
       <Route path="/timetable" element={<ProtectedRoute><Timetable /></ProtectedRoute>} />
       <Route path="/homework" element={<ProtectedRoute><Homework /></ProtectedRoute>} />
