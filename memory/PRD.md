@@ -4,6 +4,40 @@ Learnify is a UK school management platform — preschool through university —
 covering AI tutoring, lesson planning, homework/assignment grading, parent portal,
 Stripe billing, safeguarding & UK GDPR compliance.
 
+## Iteration 30 (2026-06) — Auth/RBAC hardening · Collapsible brand nav · Compliance-in-Owner · New pricing & Family plans
+
+### Auth & role-based access (done)
+- Role-based post-login redirect via `frontend/src/lib/roleNavigation.js` `homeForRole()`: owner→/owner, teacher/school_admin→/teacher, student/individual→/dashboard, parent→/parent. Wired into `Login.jsx` and `AuthCallback.jsx`.
+- `frontend/src/components/RoleRoute.jsx` guards routes by role (owner is super-admin; wrong role bounced to its own home). App.js: /owner, /owner/payouts, /compliance = owner-only; /teacher, /classes, /parent-requests = staff; /parent = parent+owner; /my-record = student+owner.
+- Backend reusable deps added after `get_current_user`: `require_owner`, `require_roles(*)`. Compliance endpoints were already owner-gated via `is_owner`. `login_username` regex now `re.escape`d.
+
+### Navigation redesign (done)
+- `SideNav.jsx` rebuilt: brand neo-brutalist palette (paper/ink, butter active, mint hover) replacing the old dark slate/indigo. Pinned Home + collapsible sections Learn/Teach/School/Account (`lib/navSections.js`). Collapse state persisted in localStorage; parent Home routes to /parent.
+- Per-user section visibility prefs: `GET/PATCH /api/me/nav-prefs` (stored on user doc, key-whitelisted). Owner/school-admin school-wide default via `school_settings.nav_section_defaults`. New `/settings` page (`Settings.jsx`) with role-filtered toggles + owner school-wide defaults; also linked from the accessibility menu. SideNav live-updates on a `nav-prefs-changed` window event.
+
+### Compliance tab (done)
+- `Compliance.jsx` refactored to export `ComplianceContent` (inner, no AppLayout); default page wraps it. Owner panel (`Owner.jsx`) gained a **Compliance** tab rendering `<ComplianceContent embedded />`. /compliance route + all compliance APIs are owner-only.
+
+### Pricing & Family plans (done — Phase 1 of the big batch)
+- `PLANS` replaced individual tiers with: free (£0, no AI), student_basic £3.99, student_standard £6.99, student_premium £9.99, family £12.99, family_premium £19.99, ultra_premium £29.99. Legacy basic/standard/pro kept hidden so existing subs resolve. School/MAT kept but flagged `contact_sales` (no public price). New feature keys: dreams, socratic_tutor, priority_ai, early_access, family, max_children(4), parent_dashboard, audience, tagline.
+- `billing_me` returns the expanded feature set. AI gating messages updated; free plan (daily_ai_limit 0) blocks AI with upgrade prompt. Downgrade ladder updated to new student tiers.
+- Family instant linking: `POST /api/parent/family/add-child` (family-plan only, cap = max_children, creates an approved parent_link instantly). Parent dashboard shows a family banner + "Add child instantly"; existing children aggregation/summary reused.
+- `Pricing.jsx` redesigned into Student + Family grids; School/MAT shown as a Contact Us card (no price). Checkout still uses the existing hosted Stripe Checkout.
+
+### Bug fixes (done)
+- DPA gate "I Accept": frontend `DpaGate.jsx` no longer stays open when a prior status fetch errored — acceptance always unlocks and clears `statusError`. (Backend accept verified working via curl.)
+- Removed 16 automated-test schools + 16 orphan users + 26 classes from the DB; kept `school_tester_demo`.
+
+### KNOWN CONSTRAINT — embedded Stripe not possible with current keys
+- `STRIPE_API_KEY=sk_test_emergent` is the Emergent-proxied shared sandbox key; `REACT_APP_STRIPE_PUBLISHABLE_KEY` is empty. True on-page embedded Stripe.js (card fields, no redirect) needs a real claimable Stripe account. Current working flow = Stripe hosted Checkout (brief redirect). Promo codes already activate instantly in-DB with no redirect.
+
+### REMAINING from the big batch (not yet built)
+- P0: Life Skills page (Financial Foundations module, verbatim content, progress tracking).
+- P0: Dreams AI tailoring + school/student/parent on-off toggles (plan `dreams` flag already wired; Dreams page + AI dream-themed homework already exist — needs the toggles + default-on).
+- P1: Exam Board AI Scanner (weekly cron scanning AQA/Edexcel/OCR/WJEC/CCEA, flag-for-owner-review, change log). User chose: flag for owner review before applying AI content updates.
+- P2: Refactor server.py (now ~6,540 lines) into routers.
+
+
 ## Iteration 29 (2026-03-XX) — Real DPF registry probe · Auditor share links · Weekly digest · School settings · Kyber PQC
 
 ### Compliance follow-ups

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import AppLayout from "@/components/AppLayout";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
-import { NAV_SECTIONS, sectionVisible } from "@/lib/navSections";
+import { NAV_SECTIONS, sectionVisible, sectionsForRole } from "@/lib/navSections";
 import { toast } from "sonner";
 import { Gear, SlidersHorizontal, Buildings, CircleNotch } from "@phosphor-icons/react";
 
@@ -43,6 +43,7 @@ export default function Settings() {
   const [savingSchool, setSavingSchool] = useState(false);
 
   const canSetSchoolDefault = user?.role === "owner" || user?.role === "school_admin";
+  const roleSections = NAV_SECTIONS.filter((s) => sectionsForRole(user?.role).includes(s.key));
 
   useEffect(() => {
     api.get("/me/nav-prefs")
@@ -59,6 +60,7 @@ export default function Settings() {
     setSavingUser(true);
     try {
       await api.patch("/me/nav-prefs", { prefs: next });
+      window.dispatchEvent(new Event("nav-prefs-changed"));
       toast.success("Navigation updated");
     } catch {
       toast.error("Could not save — try again");
@@ -77,6 +79,7 @@ export default function Settings() {
     setSavingSchool(true);
     try {
       await api.patch("/school/settings", { nav_section_defaults: next });
+      window.dispatchEvent(new Event("nav-prefs-changed"));
       toast.success("School-wide default updated");
     } catch {
       toast.error("Could not save school default");
@@ -112,7 +115,7 @@ export default function Settings() {
                 {savingUser && <span className="ml-2 inline-flex items-center gap-1"><CircleNotch size={12} className="animate-spin" /> saving…</span>}
               </p>
               <div className="space-y-2">
-                {NAV_SECTIONS.map((s) => (
+                {roleSections.map((s) => (
                   <Toggle
                     key={s.key}
                     id={`nav-${s.key}`}
@@ -137,7 +140,7 @@ export default function Settings() {
                   {savingSchool && <span className="ml-2 inline-flex items-center gap-1"><CircleNotch size={12} className="animate-spin" /> saving…</span>}
                 </p>
                 <div className="space-y-2">
-                  {NAV_SECTIONS.map((s) => (
+                  {roleSections.map((s) => (
                     <Toggle
                       key={s.key}
                       id={`school-nav-${s.key}`}

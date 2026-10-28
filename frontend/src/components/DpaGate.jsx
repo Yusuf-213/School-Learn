@@ -35,7 +35,7 @@ export default function DpaGate({ children }) {
 
   if (!user) return children;
   if (status === null && !statusError) return children; // don't block first paint
-  if (!statusError && status?.accepted) return children;
+  if (status?.accepted) return children; // accepted always unlocks, even if a prior status fetch errored
 
   const onAccept = async () => {
     setAccepting(true);
@@ -44,6 +44,7 @@ export default function DpaGate({ children }) {
       const { data } = await api.post("/legal/dpa/accept", {
         school_name: schoolName || undefined,
       });
+      setStatusError(false);
       setStatus({ accepted: true, ...data });
     } catch (e) {
       setError(e?.response?.data?.detail || "Could not record acceptance");

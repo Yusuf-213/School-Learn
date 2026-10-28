@@ -30,7 +30,7 @@ function buildNav({ user, classes }) {
   const isStaff = user?.role === "school_admin" || user?.role === "teacher" || user?.role === "owner";
   const isOwner = user?.role === "owner";
 
-  const home = { to: "/dashboard", label: "Home", icon: House, testid: "sn-home", end: true };
+  const home = { to: isOwner ? "/dashboard" : (user?.role === "parent" ? "/parent" : "/dashboard"), label: "Home", icon: House, testid: "sn-home", end: true };
 
   if (user?.role === "parent") {
     return {
@@ -220,12 +220,17 @@ export default function SideNav({ mobileOpen, onMobileClose }) {
 
   useEffect(() => {
     if (!user) return;
-    api.get("/me/nav-prefs")
-      .then(({ data }) => {
-        setPrefs(data.prefs || {});
-        setSchoolDefaults(data.school_defaults || {});
-      })
-      .catch(() => {});
+    const load = () => {
+      api.get("/me/nav-prefs")
+        .then(({ data }) => {
+          setPrefs(data.prefs || {});
+          setSchoolDefaults(data.school_defaults || {});
+        })
+        .catch(() => {});
+    };
+    load();
+    window.addEventListener("nav-prefs-changed", load);
+    return () => window.removeEventListener("nav-prefs-changed", load);
   }, [user]);
 
   useEffect(() => {
@@ -273,7 +278,7 @@ export default function SideNav({ mobileOpen, onMobileClose }) {
                     ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}
       >
         <div className="flex items-center justify-between px-4 py-4 border-b-2 border-ink">
-          <Link to="/dashboard" className="flex items-center gap-2" data-testid="side-nav-brand">
+          <Link to={user.role === "parent" ? "/parent" : "/dashboard"} className="flex items-center gap-2" data-testid="side-nav-brand">
             <div className="bg-white rounded-md p-1 border-2 border-ink shadow-brutal">
               <img src="/learnify-mark-64.png" alt="Learnify" className="h-6 w-6 object-contain" data-testid="side-nav-logo" />
             </div>

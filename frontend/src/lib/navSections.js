@@ -16,3 +16,11 @@ export function sectionVisible(key, prefs, schoolDefaults) {
   }
   return true;
 }
+
+// Which sections actually exist for a given role (mirrors SideNav.buildNav).
+export function sectionsForRole(role) {
+  if (role === "parent") return ["account"];
+  if (role === "owner") return ["learn", "teach", "school", "account"];
+  if (role === "teacher" || role === "school_admin") return ["learn", "teach", "account"];
+  return ["learn", "account"]; // student, individual
+}

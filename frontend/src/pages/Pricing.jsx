@@ -3,24 +3,28 @@ import { Link, useNavigate } from "react-router-dom";
 import AppLayout from "@/components/AppLayout";
 import GlobalNav from "@/components/GlobalNav";
 import { api } from "@/lib/api";
-import { CheckCircle, Sparkle, Crown, Buildings, XCircle, ArrowsClockwise, Prohibit, EnvelopeSimple, ArrowDown, ArrowCounterClockwise, Ticket } from "@phosphor-icons/react";
+import { CheckCircle, Sparkle, Crown, Buildings, XCircle, ArrowsClockwise, Prohibit, EnvelopeSimple, ArrowDown, ArrowCounterClockwise, Ticket, UsersThree } from "@phosphor-icons/react";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
 const FEATURES = {
-  free:          ["5 AI generations per day", "Browse all subjects", "Homework help", { neg: true, text: "No practice papers" }],
-  basic:         ["50 AI generations per day", "All subjects", "Homework help", "Basic progress tracking"],
-  standard:      ["Everything in Basic", "AI-generated mock papers", "Exam-board picker", "Extended progress reports"],
-  pro:           ["Everything in Standard", "Unlimited generations", "All exam boards", "Priority support"],
-  school_small:  ["Everything in Pro for every student", "Under 500 student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Invoice billing available"],
-  school_medium: ["Everything in Pro for every student", "500–1,000 student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Invoice billing + onboarding"],
-  school_large:  ["Everything in Pro for every student", "1,000+ student licence", "Teacher panel + lesson planner", "AI homework analysis", "Detentions, attendance, achievements", "Dedicated success manager"],
-  mat_1_5:       ["Everything in School plans", "3–5 schools licenced", "Central MAT dashboard", "Consolidated billing", "SLA support"],
-  mat_10_30:     ["Everything in Small MAT", "10+ schools", "Trust-wide analytics", "Named account manager", "Priority engineering support"],
+  free:             ["A few lessons to explore", "Browse all subjects", { neg: true, text: "No AI features" }, { neg: true, text: "No practice papers" }],
+  student_basic:    ["Full lesson access", "Basic AI homework", "10 AI generations per day", "Browse all subjects"],
+  student_standard: ["Everything in Basic", "AI homework & mock papers", "Progress tracking", "Exam-board content (AQA, Edexcel, OCR…)"],
+  student_premium:  ["Everything in Standard", "Dreams page & career routes", "Socratic AI tutor", "100 AI generations per day"],
+  family:           ["Student Standard for up to 4 children", "One parent dashboard", "All children's progress in one place", "Exam-board content for each child"],
+  family_premium:   ["Student Premium for up to 4 children", "Dreams & Socratic tutor for each child", "One parent dashboard", "100 AI generations per child/day"],
+  ultra_premium:    ["Everything unlocked for up to 4 children", "Priority AI", "Early access to new features", "One parent dashboard"],
 };
 
-const ICONS = { free: Sparkle, basic: Sparkle, standard: Sparkle, pro: Crown, school_small: Buildings, school_medium: Buildings, school_large: Buildings, mat_1_5: Buildings, mat_10_30: Buildings };
-const ACCENTS = { free: "bg-white", basic: "bg-mint", standard: "bg-butter", pro: "bg-lavender", school_small: "bg-peach", school_medium: "bg-peach", school_large: "bg-peach", mat_1_5: "bg-mint", mat_10_30: "bg-mint" };
+const ICONS = {
+  free: Sparkle, student_basic: Sparkle, student_standard: Sparkle, student_premium: Crown,
+  family: UsersThree, family_premium: UsersThree, ultra_premium: Crown,
+};
+const ACCENTS = {
+  free: "bg-white", student_basic: "bg-mint", student_standard: "bg-butter", student_premium: "bg-lavender",
+  family: "bg-mint", family_premium: "bg-butter", ultra_premium: "bg-lavender",
+};
 
 export default function Pricing() {
   const { user } = useAuth();
@@ -95,8 +99,8 @@ export default function Pricing() {
     }
   };
 
-  const PLAN_ORDER = ["free", "basic", "standard", "pro"];
-  const PLAN_NAMES = { free: "Free", basic: "Basic", standard: "Standard", pro: "Pro" };
+  const PLAN_ORDER = ["free", "student_basic", "student_standard", "student_premium"];
+  const PLAN_NAMES = { free: "Free", student_basic: "Student Basic", student_standard: "Student Standard", student_premium: "Student Premium" };
 
   const scheduleDowngrade = async (new_plan_id) => {
     const name = PLAN_NAMES[new_plan_id];
@@ -140,8 +144,59 @@ export default function Pricing() {
     }
   };
 
-  const individualIds = ["free", "basic", "standard", "pro"];
-  const cards = individualIds.map((id) => plans.find((p) => p.id === id)).filter(Boolean);
+  const studentIds = ["free", "student_basic", "student_standard", "student_premium"];
+  const familyIds = ["family", "family_premium", "ultra_premium"];
+  const byId = (id) => plans.find((p) => p.id === id);
+  const studentCards = studentIds.map(byId).filter(Boolean);
+  const familyCards = familyIds.map(byId).filter(Boolean);
+
+  const renderCard = (p) => {
+    const Icon = ICONS[p.id] || Sparkle;
+    const isCurrent = billing?.tier === p.id;
+    const isFree = p.amount === 0;
+    const isFamily = p.audience === "family";
+    return (
+      <div key={p.id} className={`brutal-card p-6 flex flex-col ${ACCENTS[p.id] || "bg-white"}`} data-testid={`plan-card-${p.id}`}>
+        <div className="flex items-center gap-2 mb-3">
+          <div className="border-2 border-ink bg-white rounded-md p-2 shadow-brutal"><Icon size={20} weight="duotone" /></div>
+          <div className="font-display font-bold text-xl">{p.name}</div>
+        </div>
+        <div className="mb-1">
+          <span className="font-display font-black text-4xl">£{Number(p.amount).toFixed(2)}</span>
+          <span className="text-sm text-[#4A4A4A] ml-1">/{p.period}</span>
+        </div>
+        <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A] mb-4">
+          {isFamily ? "Up to 4 children" : "Per student"}
+        </div>
+        <ul className="space-y-2 text-sm mb-6 grow">
+          {(FEATURES[p.id] || []).map((f, i) => {
+            const neg = typeof f === "object" && f.neg;
+            const text = typeof f === "string" ? f : f.text;
+            return (
+              <li key={i} className="flex items-start gap-2">
+                {neg ? <XCircle size={16} weight="bold" className="mt-0.5 text-[#4A4A4A] shrink-0" />
+                     : <CheckCircle size={16} weight="fill" className="mt-0.5 shrink-0" />}
+                <span className={neg ? "text-[#4A4A4A]" : ""}>{text}</span>
+              </li>
+            );
+          })}
+        </ul>
+        {isCurrent ? (
+          <button disabled className="brutal-btn bg-white opacity-80" data-testid={`plan-current-${p.id}`}>Current plan</button>
+        ) : isFree ? (
+          <Link to={user ? "/dashboard" : "/register"} className="brutal-btn bg-white hover:bg-butter text-center" data-testid={`plan-cta-${p.id}`}>
+            {user ? "Go to dashboard" : "Get started"}
+          </Link>
+        ) : (
+          <button onClick={() => subscribe(p.id)} disabled={loading === p.id}
+            data-testid={`plan-cta-${p.id}`}
+            className="brutal-btn bg-ink text-white hover:bg-[#2A2A2A] disabled:opacity-60">
+            {loading === p.id ? "Opening checkout…" : "Subscribe"}
+          </button>
+        )}
+      </div>
+    );
+  };
 
   const inner = (
     <div className="max-w-6xl mx-auto space-y-10">
@@ -234,12 +289,6 @@ export default function Pricing() {
         </div>
       )}
 
-      <div className="flex justify-center">
-        <div className="border-2 border-ink rounded-md p-1 bg-white inline-flex shadow-brutal">
-          <button data-testid="pricing-tab-individual" className="px-4 py-2 rounded font-bold text-sm bg-ink text-white">Individuals</button>
-        </div>
-      </div>
-
       {user && (
         <form onSubmit={redeemPromo} className="brutal-card p-5 bg-butter flex flex-wrap items-center gap-3" data-testid="promo-redeem-card">
           <Ticket size={22} weight="fill" />
@@ -257,65 +306,29 @@ export default function Pricing() {
         </form>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-4 md:grid-cols-2">
-        {cards.map((p) => {
-          const Icon = ICONS[p.id] || Sparkle;
-          const isCurrent = billing?.tier === p.id;
-          const isFree = p.amount === 0;
-          return (
-            <div key={p.id} className={`brutal-card p-6 flex flex-col ${ACCENTS[p.id]}`} data-testid={`plan-card-${p.id}`}>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="border-2 border-ink bg-white rounded-md p-2 shadow-brutal"><Icon size={20} weight="duotone" /></div>
-                <div className="font-display font-bold text-xl">{p.name}</div>
-              </div>
-              <div className="mb-1">
-                <span className="font-display font-black text-4xl">£{Number(p.amount).toLocaleString("en-GB")}</span>
-                <span className="text-sm text-[#4A4A4A] ml-1">/{p.period}</span>
-              </div>
-              <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A] mb-4">
-                {p.id.startsWith("mat") ? "Per MAT, whole-trust licence" : p.id.startsWith("school") ? "Per school, whole-school licence" : "Per student"}
-              </div>
-              <ul className="space-y-2 text-sm mb-6 grow">
-                {(FEATURES[p.id] || []).map((f, i) => {
-                  const neg = typeof f === "object" && f.neg;
-                  const text = typeof f === "string" ? f : f.text;
-                  return (
-                    <li key={i} className="flex items-start gap-2">
-                      {neg ? <XCircle size={16} weight="bold" className="mt-0.5 text-[#4A4A4A] shrink-0" />
-                           : <CheckCircle size={16} weight="fill" className="mt-0.5 shrink-0" />}
-                      <span className={neg ? "text-[#4A4A4A]" : ""}>{text}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-              {isCurrent ? (
-                <button disabled className="brutal-btn bg-white opacity-80" data-testid={`plan-current-${p.id}`}>Current plan</button>
-              ) : isFree ? (
-                <Link to={user ? "/dashboard" : "/register"} className="brutal-btn bg-white hover:bg-butter text-center" data-testid={`plan-cta-${p.id}`}>
-                  {user ? "Go to dashboard" : "Get started"}
-                </Link>
-              ) : p.id.startsWith("school") ? (
-                <Link to="/signup/school" className="brutal-btn bg-ink text-white text-center" data-testid={`plan-cta-${p.id}`}>
-                  Register your school
-                </Link>
-              ) : p.id.startsWith("mat") ? (
-                <Link to="/contact" className="brutal-btn bg-ink text-white text-center" data-testid={`plan-cta-${p.id}`}>
-                  Contact sales
-                </Link>
-              ) : (
-                <button onClick={() => subscribe(p.id)} disabled={loading === p.id}
-                  data-testid={`plan-cta-${p.id}`}
-                  className="brutal-btn bg-ink text-white hover:bg-[#2A2A2A] disabled:opacity-60">
-                  {loading === p.id ? "Redirecting…" : "Subscribe"}
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <section data-testid="pricing-students">
+        <div className="text-center mb-5">
+          <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">For students</div>
+          <h2 className="font-display font-black text-3xl mt-1">Individual plans</h2>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-4 md:grid-cols-2">
+          {studentCards.map(renderCard)}
+        </div>
+      </section>
+
+      <section data-testid="pricing-family">
+        <div className="text-center mb-5">
+          <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">For families</div>
+          <h2 className="font-display font-black text-3xl mt-1">Family plans — up to 4 children</h2>
+          <p className="text-sm text-[#4A4A4A] mt-2 max-w-xl mx-auto">One subscription covers up to four children and gives a parent dashboard with every child's progress in one place.</p>
+        </div>
+        <div className="grid gap-4 lg:grid-cols-3 md:grid-cols-2 max-w-5xl mx-auto">
+          {familyCards.map(renderCard)}
+        </div>
+      </section>
 
       <p className="text-xs text-[#4A4A4A] text-center max-w-2xl mx-auto">
-        Prices in GBP (£). Individual plans billed monthly · cancel anytime.
+        Prices in GBP (£). All plans billed monthly · cancel anytime.
       </p>
 
       <div className="brutal-card p-6 bg-lavender max-w-3xl mx-auto" data-testid="pricing-schools-contact">

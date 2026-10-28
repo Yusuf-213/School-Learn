@@ -28,16 +28,19 @@ export default function Parent() {
   const [form, setForm] = useState({ child_email: "", relationship: "guardian" });
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [billing, setBilling] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [c, r] = await Promise.all([
+      const [c, r, b] = await Promise.all([
         api.get("/parent/children"),
         api.get("/parent/link-requests"),
+        api.get("/billing/me").catch(() => ({ data: null })),
       ]);
       setChildren(c.data.children || []);
       setRequests(r.data.requests || []);
+      setBilling(b.data);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not load");
     } finally {
@@ -47,10 +50,23 @@ export default function Parent() {
 
   useEffect(() => { load(); }, [load]);
 
+  const familyPlan = !!billing?.plan?.family;
+  const maxChildren = billing?.plan?.max_children || 4;
+
   const request = async (e) => {
     e.preventDefault();
     setBusy(true);
     try {
+      if (familyPlan) {
+        await api.post("/parent/family/add-child", {
+          child_email: form.child_email.trim().toLowerCase(),
+          relationship: form.relationship,
+        });
+        toast.success("Child linked instantly on your family plan.");
+        setForm({ child_email: "", relationship: "guardian" });
+        load();
+        return;
+      }
       const { data } = await api.post("/parent/link-requests", {
         child_email: form.child_email.trim().toLowerCase(),
         relationship: form.relationship,
@@ -149,6 +165,16 @@ export default function Parent() {
           </p>
         </header>
 
+        {familyPlan && (
+          <div className="brutal-card p-4 bg-mint flex flex-wrap items-center justify-between gap-3" data-testid="family-plan-banner">
+            <div>
+              <div className="text-xs uppercase tracking-[0.2em] font-bold text-[#4A4A4A]">{billing?.plan?.name} plan</div>
+              <div className="font-display font-bold text-lg">Instant linking enabled — {children.length} of {maxChildren} children linked</div>
+            </div>
+            <span className="text-xs text-[#333] max-w-sm">Children you add are linked straight away, no approval needed. Their progress appears below.</span>
+          </div>
+        )}
+
         <form onSubmit={request} className="brutal-card p-4 bg-butter grid sm:grid-cols-3 gap-2 items-end" data-testid="parent-link-form">
           <label className="block sm:col-span-2">
             <span className="text-xs uppercase tracking-[0.2em] font-bold">Child's email</span>
@@ -170,9 +196,12 @@ export default function Parent() {
           </label>
           <div className="sm:col-span-3">
             <button className="brutal-btn bg-ink text-white inline-flex items-center gap-2" type="submit"
-              disabled={busy} data-testid="parent-link-submit">
-              <Plus size={14} /> {busy ? "Sending…" : "Request access"}
+              disabled={busy || (familyPlan && children.length >= maxChildren)} data-testid="parent-link-submit">
+              <Plus size={14} /> {busy ? "Saving…" : familyPlan ? "Add child instantly" : "Request access"}
             </button>
+            {familyPlan && children.length >= maxChildren && (
+              <span className="text-xs text-[#8A3B00] font-bold ml-3">Plan limit reached — unlink a child to add another.</span>
+            )}
           </div>
         </form>
 

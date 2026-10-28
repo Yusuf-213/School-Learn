@@ -46,11 +46,19 @@ JWT_REFRESH_AT_DAYS = 60  # If token is older than this when used, mint a new on
 
 # Subscription plans (GBP). Amounts are server-side ONLY (never trust frontend).
 PLANS = {
-    "free":     {"name": "Free",     "amount": 0.00,   "currency": "gbp", "period": "month", "daily_ai_limit": 5,    "papers": False, "exam_boards": False},
-    "basic":    {"name": "Basic",    "amount": 5.00,   "currency": "gbp", "period": "month", "daily_ai_limit": 30,   "papers": True,  "exam_boards": False},
-    "standard": {"name": "Standard", "amount": 10.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": False},
-    "pro":      {"name": "Pro",      "amount": 15.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": True},
-    # School plans (annual). Stripe Checkout creates one-off £ session; activation gives 365 days.
+    # ---- Individual & family plans (monthly) ----
+    "free":             {"name": "Free",             "amount": 0.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 0,    "papers": False, "exam_boards": False, "dreams": False, "socratic_tutor": False, "lessons_limited": True,  "audience": "student", "tagline": "A few lessons to explore. No AI features."},
+    "student_basic":    {"name": "Student Basic",    "amount": 3.99,  "currency": "gbp", "period": "month", "daily_ai_limit": 10,   "papers": False, "exam_boards": False, "dreams": False, "socratic_tutor": False, "audience": "student", "tagline": "Full lesson access + basic AI homework."},
+    "student_standard": {"name": "Student Standard", "amount": 6.99,  "currency": "gbp", "period": "month", "daily_ai_limit": 30,   "papers": True,  "exam_boards": True,  "dreams": False, "socratic_tutor": False, "audience": "student", "tagline": "AI homework, progress tracking & exam-board content."},
+    "student_premium":  {"name": "Student Premium",  "amount": 9.99,  "currency": "gbp", "period": "month", "daily_ai_limit": 100,  "papers": True,  "exam_boards": True,  "dreams": True,  "socratic_tutor": True,  "audience": "student", "tagline": "Everything in Standard + Dreams & Socratic AI tutor."},
+    "family":           {"name": "Family",           "amount": 12.99, "currency": "gbp", "period": "month", "daily_ai_limit": 30,   "papers": True,  "exam_boards": True,  "dreams": False, "socratic_tutor": False, "family": True, "max_children": 4, "parent_dashboard": True, "audience": "family", "tagline": "Student Standard for up to 4 children + one parent dashboard."},
+    "family_premium":   {"name": "Family Premium",   "amount": 19.99, "currency": "gbp", "period": "month", "daily_ai_limit": 100,  "papers": True,  "exam_boards": True,  "dreams": True,  "socratic_tutor": True,  "family": True, "max_children": 4, "parent_dashboard": True, "audience": "family", "tagline": "Student Premium for up to 4 children + parent dashboard."},
+    "ultra_premium":    {"name": "Ultra Premium",    "amount": 29.99, "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": True,  "dreams": True,  "socratic_tutor": True, "priority_ai": True, "early_access": True, "family": True, "max_children": 4, "parent_dashboard": True, "audience": "family", "tagline": "Everything unlocked, priority AI & early access + parent dashboard."},
+    # ---- Legacy individual tiers (hidden from pricing; kept so existing subscribers still resolve) ----
+    "basic":    {"name": "Basic (legacy)",    "amount": 5.00,  "currency": "gbp", "period": "month", "daily_ai_limit": 30,   "papers": True,  "exam_boards": False, "hidden": True},
+    "standard": {"name": "Standard (legacy)", "amount": 10.00, "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": False, "hidden": True},
+    "pro":      {"name": "Pro (legacy)",      "amount": 15.00, "currency": "gbp", "period": "month", "daily_ai_limit": 9999, "papers": True,  "exam_boards": True,  "hidden": True},
+    # School plans (annual). Not publicly priced — shown as "Contact Us" (contact_sales set below).
     "school_small":  {"name": "School · Small (Under 500 students)",     "amount": 5000.00,  "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 500},
     "school_medium": {"name": "School · Medium (500–1,000 students)",    "amount": 9000.00,  "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 1000},
     "school_large":  {"name": "School · Large (1,000+ students)",         "amount": 14000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "max_students": 99999},
@@ -61,6 +69,12 @@ PLANS = {
     "mat_50_80":     {"name": "MAT · 50–80 schools (bespoke)",            "amount": 85000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 80, "hidden": True},
     "mat_80_100":    {"name": "MAT · 80–100 schools (bespoke)",           "amount": 85000.00, "currency": "gbp", "period": "year", "daily_ai_limit": 9999, "papers": True, "exam_boards": True, "school": True, "mat": True, "max_schools": 100, "hidden": True},
 }
+
+# School & MAT plans are sold via custom quote — never shown with a public price.
+for _pid, _p in PLANS.items():
+    if _p.get("school"):
+        _p["contact_sales"] = True
+
 
 # Owner accounts — global super-admins. All credentials loaded from env so they can be rotated
 # without a code deploy. CO_OWNERS_JSON is a JSON list of {email, username, name, password}.
@@ -745,7 +759,7 @@ async def billing_me(current=Depends(get_current_user)):
     })
     return {
         "tier": plan["tier"],
-        "plan": {k: plan[k] for k in ("name", "amount", "currency", "period", "daily_ai_limit", "papers", "exam_boards")},
+        "plan": {k: plan.get(k) for k in ("name", "amount", "currency", "period", "daily_ai_limit", "papers", "exam_boards", "dreams", "socratic_tutor", "priority_ai", "early_access", "family", "max_children", "parent_dashboard", "audience", "tagline")},
         "used_today": used_today,
         "expires_at": current.get("subscription_expires_at"),
         "cancel_at_period_end": bool(current.get("cancel_at_period_end")),
@@ -799,11 +813,11 @@ async def billing_resume(current=Depends(get_current_user)):
 #   • Downgrading to "free" is equivalent to /billing/cancel.
 #   • Upgrading (higher tier) uses the normal /billing/checkout flow (immediate).
 
-_INDIVIDUAL_PLAN_ORDER = ["free", "basic", "standard", "pro"]
+_INDIVIDUAL_PLAN_ORDER = ["free", "student_basic", "student_standard", "student_premium"]
 
 
 class ScheduleDowngradeRequest(BaseModel):
-    new_plan_id: Literal["free", "basic", "standard"]
+    new_plan_id: Literal["free", "student_basic", "student_standard", "student_premium"]
 
 
 @api_router.post("/billing/schedule-downgrade")
@@ -863,12 +877,15 @@ async def billing_cancel_downgrade(current=Depends(get_current_user)):
 @api_router.post("/ai/generate")
 async def ai_generate(req: AIGenerateRequest, current=Depends(get_current_user)):
     plan = await get_user_plan(current)
-    # Gate: papers require paid plan
+    # Gate: free plan has no AI features
+    if plan.get("daily_ai_limit", 0) <= 0:
+        raise HTTPException(status_code=402, detail="AI features require a paid plan. Upgrade to Student Basic or higher.")
+    # Gate: papers require a plan that includes them
     if req.content_type == "paper" and not plan["papers"]:
-        raise HTTPException(status_code=402, detail="Practice papers require a Basic plan or higher.")
-    # Gate: exam-board mapped papers require Pro
+        raise HTTPException(status_code=402, detail="Practice papers require Student Standard or higher.")
+    # Gate: exam-board mapped papers
     if req.content_type == "paper" and req.exam_board and req.exam_board != "generic" and not plan["exam_boards"]:
-        raise HTTPException(status_code=402, detail="Exam-board papers (AQA, Edexcel, OCR, IB, CIE) require a Pro plan.")
+        raise HTTPException(status_code=402, detail="Exam-board papers (AQA, Edexcel, OCR, IB, CIE) require Student Standard or higher.")
     # Gate: daily usage
     today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     used_today = await db.generated_content.count_documents({
@@ -3832,6 +3849,71 @@ async def parent_list_link_requests(current=Depends(get_current_user)):
     return {"requests": rows}
 
 
+@api_router.post("/parent/family/add-child")
+async def family_add_child(req: ParentLinkChild, current=Depends(get_current_user)):
+    """Family-plan parents link a child instantly (no approval flow), capped at the
+    plan's max_children. Requires an active Family/Family Premium/Ultra plan."""
+    if current.get("role") != ROLE_PARENT and not is_owner(current):
+        raise HTTPException(status_code=403, detail="Parent only")
+    plan = await get_user_plan(current)
+    if not plan.get("family"):
+        raise HTTPException(status_code=402, detail="Instant linking needs a Family plan. Upgrade to Family, Family Premium or Ultra Premium.")
+    max_children = int(plan.get("max_children", 4))
+    child_email = req.child_email.lower().strip()
+    if child_email == current["email"].lower():
+        raise HTTPException(status_code=400, detail="You can't link to your own email")
+    child = await db.users.find_one({"email": child_email})
+    if not child:
+        raise HTTPException(status_code=404, detail="No student found with that email — ask the child to sign up first.")
+    if child.get("role") not in {ROLE_STUDENT, ROLE_INDIVIDUAL}:
+        raise HTTPException(status_code=400, detail="Only student or individual accounts can be linked.")
+    existing = await db.parent_links.find_one({
+        "parent_user_id": current["user_id"], "child_user_id": child["user_id"]
+    })
+    if existing and existing.get("status") == "approved":
+        existing.pop("_id", None)
+        return {"link": existing, "already_linked": True}
+    # Enforce the cap across approved + this-add links.
+    linked_count = await db.parent_links.count_documents({
+        "parent_user_id": current["user_id"],
+        "child_user_id": {"$ne": child["user_id"]},
+        "$or": [{"status": "approved"}, {"status": {"$exists": False}}],
+    })
+    if linked_count >= max_children:
+        raise HTTPException(status_code=400, detail=f"Your plan covers up to {max_children} children. Remove one before adding another.")
+    now = datetime.now(timezone.utc).isoformat()
+    link_id = existing.get("link_id") if existing else f"pl_{uuid.uuid4().hex[:10]}"
+    doc = {
+        "link_id": link_id,
+        "parent_user_id": current["user_id"],
+        "parent_email": current["email"],
+        "parent_name": current.get("name"),
+        "child_user_id": child["user_id"],
+        "child_email": child_email,
+        "child_name": child.get("name"),
+        "child_school_id": child.get("school_id"),
+        "relationship": (req.relationship or "").strip() or None,
+        "status": "approved",
+        "requested_at": now,
+        "updated_at": now,
+        "decided_at": now,
+        "decided_by": current["user_id"],
+        "decided_by_role": "family_plan",
+    }
+    await db.parent_links.update_one(
+        {"parent_user_id": current["user_id"], "child_user_id": child["user_id"]},
+        {"$set": doc, "$unset": {"rejection_reason": ""}},
+        upsert=True,
+    )
+    await _audit_parent_link(doc, "family_linked", current)
+    await _notify(
+        child["user_id"], "parent_request", "A guardian linked to your account",
+        f"{current.get('name') or current['email']} added you to their Learnify family plan.",
+        url="/dashboard", meta={"link_id": link_id},
+    )
+    return {"link": doc, "already_linked": False}
+
+
 @api_router.post("/parent/children")  # legacy compat — now creates a request instead of instant link
 async def link_child(req: ParentLinkChild, current=Depends(get_current_user)):
     return await parent_create_link_request(req, current)
@@ -5511,7 +5593,7 @@ async def login_username(payload: dict):
         raise HTTPException(status_code=400, detail="identifier and password required")
     user = await db.users.find_one({"$or": [
         {"email": username_or_email},
-        {"username": {"$regex": f"^{username_or_email}$", "$options": "i"}},
+        {"username": {"$regex": f"^{re.escape(username_or_email)}$", "$options": "i"}},
     ]})
     if not user or not user.get("password_hash") or not verify_password(password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -6375,7 +6457,8 @@ async def get_my_nav_prefs(current=Depends(get_current_user)):
 
 @api_router.patch("/me/nav-prefs")
 async def update_my_nav_prefs(payload: NavPrefsUpdate, current=Depends(get_current_user)):
-    clean = {str(k): bool(v) for k, v in payload.prefs.items()}
+    valid = {"learn", "teach", "school", "account"}
+    clean = {str(k): bool(v) for k, v in payload.prefs.items() if k in valid}
     await db.users.update_one({"user_id": current["user_id"]}, {"$set": {"nav_prefs": clean}})
     school = await _school_settings_doc(current.get("school_id"))
     return {"prefs": clean, "school_defaults": school.get("nav_section_defaults") or {}}
