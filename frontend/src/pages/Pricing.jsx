@@ -148,5 +148,6 @@ export default function Pricing() {
       <GlobalNav />
       <div className="p-6 py-12">{inner}</div>
     </div>
+    </div> {/* ── Promo code redemption ── */} <div className="mt-10 max-w-md mx-auto border-2 border-ink rounded-xl p-6 bg-white"> <h2 className="font-display font-black text-xl mb-4">Have a promo code?</h2> <div className="flex gap-2"> <input type="text" placeholder="Enter code e.g. HWA26" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())} className="flex-1 border-2 border-ink rounded-lg px-3 py-2 font-mono uppercase" /> <button onClick={redeemPromo} disabled={promoLoading} className="brutal-btn bg-ink text-white hover:bg-[#2A2A2A] disabled:opacity-60" > {promoLoading ? "Redeeming…" : "Redeem"} </button> </div> {promoMsg && <p className="mt-3 text-sm font-bold">{promoMsg}</p>} </div> ); } 
   );
 }
