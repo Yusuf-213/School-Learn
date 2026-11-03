@@ -10,7 +10,7 @@ import {
   House, CalendarBlank, BookOpen, ClipboardText, Exam,
   Target, ChartLineUp, FileText, Megaphone, Robot, Crown, Bank, Compass,
   CaretDown, CaretRight, X, SignOut, Gear, List,
-  ChalkboardTeacher, Chat, Trophy, CreditCard, Users, ShieldCheck,
+  ChalkboardTeacher, Chat, Trophy, CreditCard, Users, ShieldCheck, GraduationCap,
 } from "@phosphor-icons/react";
 
 const FALLBACK_CLASSES = [
@@ -40,6 +40,7 @@ function buildNav({ user, classes }) {
           key: "account",
           items: [
             { to: "/parent", label: "Parent portal", icon: Users, testid: "sn-parent" },
+            { to: "/life-skills", label: "Life Skills", icon: GraduationCap, testid: "sn-life-skills" },
             { to: "/suggestions", label: "Feedback", icon: Chat, testid: "sn-suggestions" },
           ],
         },

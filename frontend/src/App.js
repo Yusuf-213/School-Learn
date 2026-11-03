@@ -46,6 +46,7 @@ import Privacy from "@/pages/Privacy";
 import Settings from "@/pages/Settings";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ResetPassword from "@/pages/ResetPassword";
+import LifeSkills from "@/pages/LifeSkills";
 
 function AppRouter() {
   const location = useLocation();
@@ -78,6 +79,7 @@ function AppRouter() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+      <Route path="/life-skills" element={<ProtectedRoute><LifeSkills /></ProtectedRoute>} />
       <Route path="/owner/payouts" element={<RoleRoute allow={OWNER_ONLY}><Payouts /></RoleRoute>} />
       <Route path="/timetable" element={<ProtectedRoute><Timetable /></ProtectedRoute>} />
       <Route path="/homework" element={<ProtectedRoute><Homework /></ProtectedRoute>} />

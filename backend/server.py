@@ -6687,6 +6687,29 @@ async def update_my_nav_prefs(payload: NavPrefsUpdate, current=Depends(get_curre
     return {"prefs": clean, "school_defaults": school.get("nav_section_defaults") or {}}
 
 
+# ---- Life Skills progress (per user) ----
+class LifeSkillsProgress(BaseModel):
+    completed: Optional[List[str]] = None
+    checklist: Optional[List[str]] = None
+
+
+@api_router.get("/me/life-skills")
+async def get_life_skills(current=Depends(get_current_user)):
+    p = current.get("life_skills_progress") or {}
+    return {"completed": p.get("completed", []), "checklist": p.get("checklist", [])}
+
+
+@api_router.patch("/me/life-skills")
+async def update_life_skills(payload: LifeSkillsProgress, current=Depends(get_current_user)):
+    p = current.get("life_skills_progress") or {}
+    if payload.completed is not None:
+        p["completed"] = list(dict.fromkeys(str(x) for x in payload.completed))
+    if payload.checklist is not None:
+        p["checklist"] = list(dict.fromkeys(str(x) for x in payload.checklist))
+    await db.users.update_one({"user_id": current["user_id"]}, {"$set": {"life_skills_progress": p}})
+    return {"completed": p.get("completed", []), "checklist": p.get("checklist", [])}
+
+
 # ====================== Register router & middleware ======================
 
 # Post-quantum crypto — proves ML-KEM-1024 is available at boot and exposes an
