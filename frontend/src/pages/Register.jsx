@@ -51,7 +51,7 @@ export default function Register() {
       toast.success(isParent ? "Parent account created — link your child next." : "Account created!");
       navigate(isParent ? "/parent" : "/dashboard", { replace: true });
     } catch (ex) {
-      setErr(ex.response?.data?.detail || "Registration failed");
+     const detail = ex.response?.data?.detail; setErr(Array.isArray(detail) ? detail.map(d => d.msg).join(" ") : typeof detail === "object" && detail !== null ? JSON.stringify(detail) : detail || "Registration failed"); 
     } finally {
       setLoading(false);
     }
