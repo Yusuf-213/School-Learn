@@ -138,12 +138,4 @@ const [promoCode, setPromoCode] = useState(""); const [promoLoading, setPromoLoa
         })}
       </div>
 
-      <p className="text-xs text-[#4A4A4A] text-center max-w-2xl mx-auto">
-        Prices in GBP. School plans are annual whole-school licences. Test mode — no real charges on the demo.
-      </p>
-      </p> <div className="mt-10 max-w-md mx-auto border-2 border-ink rounded-xl p-6 bg-white"> <h2 className="font-display font-black text-xl mb-4">Have a promo code?</h2> <div className="flex gap-2"> <input type="text" placeholder="Enter code e.g. HWA26" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())} className="flex-1 border-2 border-ink rounded-lg px-3 py-2 font-mono uppercase" /> <button onClick={redeemPromo} disabled={promoLoading} className="brutal-btn bg-ink text-white hover:bg-[#2A2A2A] disabled:opacity-60" > {promoLoading ? "Redeeming…" : "Redeem"} </button> </div> {promoMsg && <p className="mt-3 text-sm font-bold">{promoMsg}</p>} </div> </div> ); } 
-    </div>
-  );
-
-  
-}
+      <p className="text-xs text-[#4A4A4A] text-center max-w-2xl mx-auto"> Prices in GBP. School plans are annual whole-school licences. </p> <div className="mt-10 max-w-md mx-auto border-2 border-ink rounded-xl p-6 bg-white"> <h2 className="font-display font-black text-xl mb-4">Have a promo code?</h2> <div className="flex gap-2"> <input type="text" placeholder="Enter code e.g. HWA26" value={promoCode} onChange={e => setPromoCode(e.target.value.toUpperCase())} className="flex-1 border-2 border-ink rounded-lg px-3 py-2 font-mono uppercase" /> <button onClick={redeemPromo} disabled={promoLoading} className="brutal-btn bg-ink text-white hover:bg-[#2A2A2A] disabled:opacity-60" > {promoLoading ? "Redeeming…" : "Redeem"} </button> </div> {promoMsg && <p className="mt-3 text-sm font-bold">{promoMsg}</p>} </div> </div> ); return user ? <AppLayout>{inner}</AppLayout> : ( <div className="min-h-screen bg-paper"> <GlobalNav /> <div className="p-6 py-12">{inner}</div> </div> ); } 
